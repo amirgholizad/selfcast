@@ -1,3 +1,5 @@
+[![Selfcast: turn any text into a podcast episode in your own voice](docs/social-preview.png)](https://amirgholizad.github.io/selfcast/)
+
 # Selfcast
 
 Turn any text into a podcast episode in **your own voice**. Record yourself talking for a
