@@ -9,7 +9,7 @@ never leaves your machine. It's built on [Chatterbox](https://github.com/resembl
 by Resemble AI, and it comes with [Claude Code](https://claude.com/claude-code) skills, so
 making an episode can be as short as `/podcast my-script.md`.
 
-**[Listen to a demo](https://amirgholizad.github.io/selfcast/)** · [Use this template](https://github.com/amirgholizad/selfcast/generate) · [Requirements](#requirements) · [Claude Code skills](#using-it-with-claude-code) · [MIT licensed](LICENSE)
+**[Listen to a demo](https://amirgholizad.github.io/selfcast/)** · [Requirements](#requirements) · [Claude Code skills](#using-it-with-claude-code) · [MIT licensed](LICENSE)
 
 The [demo](https://amirgholizad.github.io/selfcast/) is 37 seconds of my own voice, cloned from
 one minute of recording and generated on a MacBook Air M4. Nothing was edited by hand.
@@ -75,7 +75,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ## Quick start
 
-1. Click **Use this template** on GitHub (or fork / clone the repo), then install:
+1. Clone the repo (or fork it first if you want to make changes), then install:
 
    ```sh
    git clone https://github.com/amirgholizad/selfcast.git
