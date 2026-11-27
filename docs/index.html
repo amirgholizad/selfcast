@@ -9,84 +9,134 @@
   <meta property="og:title" content="Selfcast: podcasts in your own voice">
   <meta property="og:description" content="A voice cloned from one minute of recording, generated entirely on a laptop. Open source, runs locally, no cloud.">
   <meta property="og:url" content="https://amirgholizad.github.io/selfcast/">
-  <meta name="color-scheme" content="light dark">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%235b4bdb'/%3E%3Cg fill='%23fff'%3E%3Crect x='7' y='13' width='3' height='6' rx='1.5'/%3E%3Crect x='12' y='9' width='3' height='14' rx='1.5'/%3E%3Crect x='17' y='6' width='3' height='20' rx='1.5'/%3E%3Crect x='22' y='11' width='3' height='10' rx='1.5'/%3E%3C/g%3E%3C/svg%3E">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0e0e0e">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230e0e0e'/%3E%3Cg fill='%23f4462f'%3E%3Crect x='7' y='13' width='3' height='6'/%3E%3Crect x='12' y='9' width='3' height='14'/%3E%3Crect x='17' y='6' width='3' height='20'/%3E%3Crect x='22' y='11' width='3' height='10'/%3E%3C/g%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@300..900&display=swap" rel="stylesheet">
   <style>
+    /* Dark is the primary theme. */
     :root {
-      --bg: #f6f5f2;
-      --card: #ffffff;
-      --text: #1d1b22;
-      --muted: #5f5b69;
-      --line: #e4e1ea;
-      --accent: #5b4bdb;
-      --accent-text: #ffffff;
-      --radius: 16px;
+      --bg: #0e0e0e;
+      --panel: rgba(14, 14, 14, 0.72);
+      --text: #e4e4e4;
+      --bright: #fafafa;
+      --muted: #a1a1a1;
+      --line: rgba(255, 255, 255, 0.10);
+      --line-strong: rgba(255, 255, 255, 0.15);
+      --accent: #f4462f;          /* fills, rules, focus */
+      --accent-text: #f4462f;     /* small accent-coloured text */
+      --on-accent: #0e0e0e;
+      --glow: radial-gradient(ellipse 90% 60% at 50% 115%, rgba(244, 70, 47, 0.42) 0%, rgba(190, 38, 16, 0.22) 38%, rgba(110, 20, 8, 0.08) 62%, transparent 80%),
+              radial-gradient(ellipse 40% 30% at 92% -5%, rgba(244, 70, 47, 0.10), transparent 70%);
+      --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
     }
-    @media (prefers-color-scheme: dark) {
+    @media (prefers-color-scheme: light) {
       :root {
-        --bg: #121116;
-        --card: #1c1b22;
-        --text: #f1eff5;
-        --muted: #a9a4b5;
-        --line: #2e2c36;
-        --accent: #8f83ff;
-        --accent-text: #121116;
+        --bg: #ffffff;
+        --panel: rgba(255, 255, 255, 0.82);
+        --text: #0a0a0a;
+        --bright: #0a0a0a;
+        --muted: #737373;
+        --line: #e5e5e5;
+        --line-strong: #d4d4d4;
+        --accent-text: #c2321d;   /* #f4462f is too light for small text on white */
+        --glow: radial-gradient(ellipse 45% 45% at 0% 110%, rgba(244, 70, 47, 0.14), transparent 70%),
+                radial-gradient(ellipse 45% 45% at 100% 110%, rgba(244, 70, 47, 0.14), transparent 70%);
       }
     }
     * { box-sizing: border-box; }
+    html { background: var(--bg); }
     body {
       margin: 0;
       min-height: 100vh;
       display: grid;
       place-items: center;
       padding: 32px 16px;
-      background: var(--bg);
+      background: var(--glow), var(--bg);
+      background-attachment: fixed;
       color: var(--text);
-      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font: 400 16px/1.625 "Figtree", Arial, sans-serif;
     }
     main {
       width: 100%;
-      max-width: 620px;
-      background: var(--card);
+      max-width: 640px;
+      background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: var(--radius);
-      padding: clamp(24px, 5vw, 44px);
+      padding: clamp(24px, 6vw, 48px);
+      backdrop-filter: blur(6px);
     }
     .eyebrow {
-      margin: 0 0 8px;
-      color: var(--accent);
+      margin: 0 0 14px;
+      color: var(--accent-text);
       font-size: 13px;
       font-weight: 600;
-      letter-spacing: 0.08em;
+      letter-spacing: 0.14em;
       text-transform: uppercase;
     }
-    h1 { margin: 0 0 8px; font-size: clamp(32px, 7vw, 44px); line-height: 1.1; letter-spacing: -0.02em; }
-    .lede { margin: 0 0 28px; color: var(--muted); font-size: 18px; }
-    audio { width: 100%; margin: 0 0 12px; }
-    .note { margin: 0 0 28px; color: var(--muted); font-size: 14px; }
-    details { border-top: 1px solid var(--line); padding: 16px 0 4px; margin-bottom: 24px; }
-    summary { cursor: pointer; font-weight: 600; }
-    details p { color: var(--muted); margin: 12px 0 0; }
+    h1 {
+      margin: 0;
+      color: var(--bright);
+      font-size: clamp(44px, 11vw, 72px);
+      font-weight: 800;
+      line-height: 0.9;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .cut {
+      height: 2px;
+      width: 120px;
+      margin: 20px 0 22px;
+      background: var(--accent);
+      box-shadow: 0 0 14px rgba(244, 70, 47, 0.6);
+      transform-origin: left;
+      animation: cut 0.9s var(--ease-out-expo) 0.15s both;
+    }
+    @keyframes cut { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+    .lede { margin: 0 0 32px; font-size: 19px; font-weight: 300; }
+    audio { display: block; width: 100%; margin: 0 0 14px; }
+    .note { margin: 0 0 32px; color: var(--muted); font-size: 14px; }
+    details { border-top: 1px solid var(--line); padding: 18px 0 6px; margin-bottom: 28px; }
+    summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    summary::marker { color: var(--accent); }
+    details p { color: var(--muted); margin: 14px 0 0; }
     .actions { display: flex; flex-wrap: wrap; gap: 12px; }
     .btn {
       display: inline-block;
-      padding: 10px 18px;
-      border-radius: 999px;
-      border: 1px solid var(--accent);
-      color: var(--accent);
+      padding: 13px 22px;
+      border: 1px solid var(--line-strong);
+      color: var(--text);
       text-decoration: none;
-      font-weight: 600;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      transition: border-color 0.2s, background-color 0.2s;
     }
-    .btn.primary { background: var(--accent); color: var(--accent-text); }
-    .btn:focus-visible, summary:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
-    footer { margin-top: 28px; color: var(--muted); font-size: 13px; }
-    footer a { color: inherit; }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+    .btn.primary:hover { background: #d93a24; border-color: #d93a24; }
+    .btn:focus-visible, summary:focus-visible, audio:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    footer { margin-top: 32px; color: var(--muted); font-size: 13px; }
+    footer a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 3px; }
+    @media (prefers-reduced-motion: reduce) {
+      .cut { animation: none; }
+      .btn { transition: none; }
+    }
   </style>
 </head>
 <body>
   <main>
     <p class="eyebrow">Open source · Runs locally</p>
     <h1>Selfcast</h1>
+    <div class="cut" aria-hidden="true"></div>
     <p class="lede">Turn any text into a podcast episode in your own voice.</p>
 
     <audio controls preload="metadata" src="demo.mp3">
