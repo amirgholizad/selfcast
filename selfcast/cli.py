@@ -170,24 +170,62 @@ def _episode_path(title: str) -> Path:
     return folder / f"{folder.name}.mp3"
 
 
-def _render_chunk(eng, text: str, seed: int, args: argparse.Namespace):
-    """Synthesize one chunk; retry when the duration says the take is glitched."""
+def _duration_error(text: str, seconds: float) -> float:
+    """0 when the take's length is plausible for its text, else how far outside (relative)."""
+    lo, hi = speech_bounds(text)
+    if lo <= seconds <= hi:
+        return 0.0
+    return (lo - seconds) / max(lo, 1e-3) if seconds < lo else (seconds - hi) / hi
+
+
+def _take_info(text: str, wav, sr: int, check) -> dict:
+    """What we know about a take; saved next to the cached audio so flags survive re-runs."""
+    seconds = len(wav) / sr
+    return {"duration": round(seconds, 2), "duration_ok": _duration_error(text, seconds) == 0.0,
+            "qa": check.as_dict() if check is not None else None}
+
+
+def _problems(text: str, info: dict, judge) -> list[str]:
+    """Why a take still needs a listen ([] when it looks fine)."""
+    from .qa import describe, is_acceptable
+
+    out = []
+    if not info.get("duration_ok", True):
+        lo, hi = speech_bounds(text)
+        out.append(f"{info['duration']:.1f}s long, expected {lo:.1f}-{hi:.1f}s")
+    qa = info.get("qa")
+    if judge is not None and qa and not is_acceptable(qa, judge.threshold):
+        out.append(describe(qa))
+    return out
+
+
+def _render_chunk(eng, text: str, seed: int, args: argparse.Namespace, judge):
+    """Synthesize one chunk. A take with an implausible length (truncated or rambling), or one
+    Whisper hears as different words, is re-taken with a new seed, up to --max-retries times.
+    Returns (audio, info, seconds spent synthesizing); the best take wins."""
     from .audio import trim_silence
 
-    lo, hi = speech_bounds(text)
-    best, best_err = None, float("inf")
+    best, best_key, synth_secs, qa_rejects = None, None, 0.0, 0
     for attempt in range(args.max_retries + 1):
+        t0 = time.time()
         wav = eng.synthesize(text, seed + attempt * 7919, language=args.language,
                              exaggeration=args.exaggeration, cfg_weight=args.cfg_weight,
                              temperature=args.temperature)
         wav = trim_silence(wav, eng.sr)
-        dur = len(wav) / eng.sr
-        if lo <= dur <= hi:
-            return wav, True, attempt + 1
-        err = (lo - dur) / max(lo, 1e-3) if dur < lo else (dur - hi) / hi
-        if err < best_err:
-            best, best_err = wav, err
-    return best, False, args.max_retries + 1
+        synth_secs += time.time() - t0
+        check = judge.check(text, wav, eng.sr) if judge is not None else None
+        info = _take_info(text, wav, eng.sr, check)
+        dur_err = _duration_error(text, info["duration"])
+        qa_bad = check is not None and not check.ok
+        key = (dur_err > 0, qa_bad, check.wer if check else 0.0, dur_err)
+        if best_key is None or key < best_key:
+            best, best_key = (wav, info), key
+        if not key[0] and not key[1]:
+            break
+        qa_rejects += int(qa_bad and not key[0])
+    wav, info = best
+    info["tries"], info["qa_retakes"] = attempt + 1, qa_rejects
+    return wav, info, synth_secs
 
 
 def cmd_podcast(args: argparse.Namespace) -> None:
@@ -250,8 +288,15 @@ def cmd_podcast(args: argparse.Namespace) -> None:
     cache = C.CACHE_DIR / voice.name
     cache.mkdir(parents=True, exist_ok=True)
 
+    judge = None
+    if args.qa:
+        from .qa import Judge
+
+        judge = Judge(args.qa_threshold, log=log)
+
     rendered: dict[int, np.ndarray] = {}
-    flagged, cached, retries = [], 0, 0
+    infos: dict[int, dict] = {}
+    cached, retries, qa_retakes = 0, 0, 0
     gen_chars, gen_secs = 0, 0.0
     paths = {c.index: cache / (hashlib.sha1(json.dumps(
         [args.engine, conds_id, args.language, args.exaggeration, args.cfg_weight, args.temperature,
@@ -263,29 +308,47 @@ def cmd_podcast(args: argparse.Namespace) -> None:
     if fresh and eng is None:
         eng = load_engine()  # only load the ~4 GB model when something actually needs generating
     for c in chunks:
-        path = paths[c.index]
+        path, info_path = paths[c.index], paths[c.index].with_suffix(".json")
         if c.index not in fresh:
-            rendered[c.index], _ = sf.read(path, dtype="float32")
+            wav, wav_sr = sf.read(path, dtype="float32")
+            rendered[c.index] = wav
+            try:
+                info = json.loads(info_path.read_text())
+            except (FileNotFoundError, json.JSONDecodeError):  # cached before verdicts were saved
+                info = _take_info(c.text, wav, wav_sr, None)
+            if judge is not None:
+                if info.get("qa") is None:  # cached before QA, or rendered with --no-qa
+                    info["qa"] = judge.check(c.text, wav, wav_sr).as_dict()
+                else:  # re-score the saved transcript, so rule or word-list changes apply
+                    info["qa"] = judge.score(c.text, info["qa"]["heard"]).as_dict()
+                info_path.write_text(json.dumps(info, ensure_ascii=False))
+            infos[c.index] = info
             cached += 1
             continue
         seed = random.randrange(1, 2**31) if c.index in redo else args.seed
         todo_chars -= len(c.text)
         t0 = time.time()
-        wav, ok, tries = _render_chunk(eng, c.text, seed, args)
+        wav, info, synth_secs = _render_chunk(eng, c.text, seed, args, judge)
         took = time.time() - t0
         sf.write(path, wav, eng.sr)
-        rendered[c.index] = wav
-        retries += tries - 1
-        if not ok:
-            flagged.append(c.index)
-        gen_chars, gen_secs = gen_chars + len(c.text), gen_secs + took
-        rest = took * C.ECO_REST_RATIO if args.power == "eco" else 0.0
-        eta = todo_chars * gen_secs / gen_chars * (1 + (C.ECO_REST_RATIO if args.power == "eco" else 0))
-        log(f"[{c.index:>3}/{len(chunks)}] {len(wav) / eng.sr:5.1f}s audio in {took:5.1f}s"
-            f"{' (retried)' if tries > 1 else ''}{' !check' if not ok else ''}"
+        info_path.write_text(json.dumps(info, ensure_ascii=False))
+        rendered[c.index], infos[c.index] = wav, info
+        retries += info["tries"] - 1
+        qa_retakes += info["qa_retakes"]
+        problems = _problems(c.text, info, judge)
+        # Eco mode rests the GPU for half the time it worked. Whisper runs on the CPU, so the time
+        # spent transcribing counts towards that rest instead of adding to it.
+        rest = max(0.0, synth_secs * C.ECO_REST_RATIO - (took - synth_secs)) if args.power == "eco" else 0.0
+        gen_chars, gen_secs = gen_chars + len(c.text), gen_secs + took + rest
+        eta = todo_chars * gen_secs / gen_chars
+        qa_note = f" WER {info['qa']['wer']:.0%}" if info.get("qa") else ""
+        log(f"[{c.index:>3}/{len(chunks)}] {len(wav) / eng.sr:5.1f}s audio in {took:5.1f}s{qa_note}"
+            f"{' (retried)' if info['tries'] > 1 else ''}{' !check' if problems else ''}"
             f" | ETA {human(eta)} | {c.text[:60]}{'...' if len(c.text) > 60 else ''}")
         if rest and todo_chars:
             time.sleep(rest)
+    reasons = {c.index: "; ".join(p) for c in chunks if (p := _problems(c.text, infos[c.index], judge))}
+    flagged = sorted(reasons)
 
     # Assemble: paragraph/heading pauses from the script, short gaps between chunks
     sr = eng.sr if eng else sf.info(str(paths[chunks[0].index])).samplerate
@@ -317,22 +380,40 @@ def cmd_podcast(args: argparse.Namespace) -> None:
     # Sidecars: the exact script, and a chunk map for fixing individual sentences
     script_path, chunk_path = out.with_suffix(".script.md"), out.with_suffix(".chunks.txt")
     script_path.write_text(raw if raw.endswith("\n") else raw + "\n", encoding="utf-8")
-    lines = ["# chunk  start     text   ('!' = duration looked off; listen there first)"]
+    lines = ["# chunk  start     text   ('!' = still sounded off after retries; listen there first)"]
     for c in chunks:
         mark = "!" if c.index in flagged else " "
         lines.append(f"{mark}{c.index:03d}    {clock(starts[c.index] / args.speed)}   {c.text}")
+    if reasons:
+        lines += ["", "# Why the '!' chunks were flagged:"]
+        lines += [f"#  {i:03d}  {reasons[i]}" for i in flagged]
     chunk_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    elapsed = time.time() - t_start
-    log(f"\nDone in {human(elapsed)}: {out}  ({human(duration)} long, peak GPU memory {eng.peak_gpu_gb if eng else 0:.1f} GB)")
+    from .engine import peak_memory_gb
+
+    elapsed, peak_gpu, peak_mem = time.time() - t_start, (eng.peak_gpu_gb if eng else 0.0), peak_memory_gb()
+    qa_stats = None
+    if judge is not None:
+        wers = [infos[c.index]["qa"]["wer"] for c in chunks if infos[c.index].get("qa")]
+        qa_stats = {"model": judge.model_name, "threshold": judge.threshold, "checked": len(wers),
+                    "mean_wer": round(sum(wers) / max(len(wers), 1), 3), "max_wer": max(wers, default=0.0),
+                    "retakes": qa_retakes, "seconds": round(judge.seconds, 1)}
+    log(f"\nDone in {human(elapsed)}: {out}  ({human(duration)} long, peak GPU memory {peak_gpu:.1f} GB, "
+        f"process peak {peak_mem:.1f} GB)")
+    if qa_stats:
+        log(f"  QA: mean WER {qa_stats['mean_wer']:.1%}, {qa_retakes} re-takes for misread words, "
+            f"{qa_stats['seconds']:.0f}s transcribing")
     if flagged:
         log(f"  ! chunks {', '.join(map(str, flagged))} may be glitched - listen around those times "
             f"(see {chunk_path.name}) and re-render with --redo {','.join(map(str, flagged))}")
+        for i in flagged:
+            log(f"    {i:03d}: {reasons[i]}")
     result({"output": str(out), "duration_sec": round(duration, 1), "chunks": len(chunks),
             "from_cache": cached, "retries": retries, "flagged_chunks": flagged,
             "script": str(script_path), "chunk_map": str(chunk_path), "voice": voice.name,
             "engine": args.engine, "power": args.power, "elapsed_sec": round(elapsed, 1),
-            "notes": notes})
+            "notes": notes, "flag_reasons": {str(i): reasons[i] for i in flagged}, "qa": qa_stats,
+            "peak_gpu_gb": round(peak_gpu, 2), "peak_memory_gb": round(peak_mem, 2)})
 
 
 # --------------------------------------------------------------------------- argparse
@@ -376,6 +457,10 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--cfg-weight", type=float, default=0.5, help="standard/multilingual only")
     q.add_argument("--max-chars", type=int, default=280, help="max characters per generated chunk")
     q.add_argument("--max-retries", type=int, default=2)
+    q.add_argument("--qa", action=argparse.BooleanOptionalAction, default=C.QA_DEFAULT,
+                   help="check every chunk with Whisper (CPU) and re-take misread ones (default: on)")
+    q.add_argument("--qa-threshold", type=float, default=C.QA_THRESHOLD,
+                   help=f"word error rate above which a take is re-done (default {C.QA_THRESHOLD})")
     q.add_argument("--redo", help="chunk numbers to re-take, e.g. 4,12 (see the .chunks.txt file)")
     power_args(q)
     q.set_defaults(func=cmd_podcast)

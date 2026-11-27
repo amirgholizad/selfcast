@@ -45,18 +45,22 @@ def _quiet():
         yield
 
 
-def _checkpoint_dir(engine: str, log) -> Path:
+def checkpoint_dir(repo: str, patterns: list[str], required: list[str], log, what: str) -> Path:
+    """Local snapshot of a Hugging Face repo: the offline cache when complete, else download."""
     from huggingface_hub import snapshot_download
 
-    repo, patterns, required = MODELS[engine]
     try:
         path = Path(snapshot_download(repo_id=repo, allow_patterns=patterns, local_files_only=True))
         if all((path / f).exists() for f in required):
             return path
     except Exception:
         pass
-    log(f"Downloading the {engine} model weights (first run only, a few GB)...")
+    log(f"Downloading {what} (first run only)...")
     return Path(snapshot_download(repo_id=repo, allow_patterns=patterns))
+
+
+def _checkpoint_dir(engine: str, log) -> Path:
+    return checkpoint_dir(*MODELS[engine], log=log, what=f"the {engine} model weights (a few GB)")
 
 
 def _model_class(engine: str):
@@ -88,6 +92,25 @@ def apply_power_mode(mode: str, device: str) -> None:
         torch.set_num_threads(C.ECO_THREADS)
         if device == "mps":
             torch.mps.set_per_process_memory_fraction(C.ECO_MPS_MEMORY_FRACTION)
+
+
+def peak_memory_gb() -> float:
+    """Lifetime peak memory of this process, Apple GPU buffers included: the "peak memory
+    footprint" that `/usr/bin/time -l` reports. Falls back to peak RSS on other systems."""
+    if sys.platform == "darwin":
+        import ctypes
+
+        class _RUsageInfoV4(ctypes.Structure):  # <sys/resource.h>: rusage_info_v4
+            _fields_ = [("uuid", ctypes.c_uint8 * 16), ("fields", ctypes.c_uint64 * 35)]
+
+        with contextlib.suppress(OSError, AttributeError):
+            info = _RUsageInfoV4()
+            if ctypes.CDLL("/usr/lib/libproc.dylib").proc_pid_rusage(os.getpid(), 4, ctypes.byref(info)) == 0:
+                return info.fields[28] / 1e9  # ri_lifetime_max_phys_footprint
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss  # bytes on macOS, KiB on Linux
+    return peak / 1e9 if sys.platform == "darwin" else peak * 1024 / 1e9
 
 
 class Engine:

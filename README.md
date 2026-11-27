@@ -39,8 +39,10 @@ Done in 2m 10s: podcasts/2026-11-27-the-two-minute-rule/2026-11-27-the-two-minut
   to -1 dBFS, with title, show and artist tags.
 - **Fix one sentence, not the whole episode.** Every episode comes with a chunk map of timestamps.
   Re-take only the line that sounds off, or edit the script: unchanged sentences come from a cache.
-- **Glitch guard.** A sentence that comes out much too long or too short (a sign of a bad take) is
-  regenerated automatically, and anything still suspicious is flagged so you know where to listen.
+- **Listens to itself.** Every sentence is transcribed with Whisper (locally, on the CPU) and
+  compared with the script. A take that drops a letter ("CS" for "C S S"), slurs words together,
+  or comes out much too long or short is regenerated automatically. Anything still off is flagged
+  with what was heard, so you know where to listen.
 - **Watermarked.** Output carries Resemble AI's inaudible [Perth](https://github.com/resemble-ai/perth)
   watermark, so it can be identified as synthetic.
 
@@ -150,6 +152,9 @@ uv run selfcast voices
 | `--speed 0.7-1.3` | 1.0 | Tempo change with pitch preserved. Re-exporting at a new speed reuses the cache. |
 | `--power eco\|fast` | eco | See [Power and memory](#power-and-memory) |
 | `--redo 4,12` | none | Re-take only these chunks (numbers from `.chunks.txt`) |
+| `--qa` / `--no-qa` | on | Check every chunk with Whisper and re-take misread ones. See [Quality check](#quality-check). |
+| `--qa-threshold` | 0.1 | Word error rate above which a take is re-done |
+| `--max-retries N` | 2 | Re-takes per chunk before it's flagged instead |
 | `--seed N` | 42 | A different take of the whole episode |
 | `--engine turbo\|standard\|multilingual` | turbo | See below |
 | `--language xx` | en | Multilingual engine only |
@@ -183,9 +188,12 @@ Each episode folder contains the `.mp3`, the exact `.script.md` that was read, a
 `.chunks.txt` map:
 
 ```text
-# chunk  start     text   ('!' = duration looked off; listen there first)
+# chunk  start     text   ('!' = still sounded off after retries; listen there first)
  003    00:07.2   Today I want to share one small idea that changed how I get things done...
- 004    00:18.2   Here's how it works: If a task takes less than two minutes, do it right now...
+!004    00:18.2   Here's how it works. If a task takes less than two minutes, do it right now...
+
+# Why the '!' chunks were flagged:
+#  004  WER 6% (1/17 words): minutes -> minute
 ```
 
 - **One line sounds off:** re-take just that chunk, and everything else comes from the cache:
@@ -196,6 +204,28 @@ Each episode folder contains the `.mp3`, the exact `.script.md` that was read, a
 
 - **Wording change:** edit the script and re-run with the same `--out`. Only changed sentences
   are regenerated.
+
+## Quality check
+
+Chatterbox occasionally drops or slurs a word, and the duration alone rarely gives it away. So
+after each chunk is generated, Selfcast transcribes it with
+[Whisper](https://huggingface.co/openai/whisper-base.en) (`whisper-base.en`, ~290 MB, downloaded
+on first use, runs on the CPU) and compares the transcript with the chunk's text. The script is
+never shown to Whisper, so it can't hear what it expects to hear.
+
+A take is re-done when:
+
+- an acronym, a number or a listed word comes back wrong ("CS" for "CSS"),
+- two or more words in a row are wrong (a slur: "far fewer leave" heard as "fewerly"), or
+- more than 10% of the words are wrong (`--qa-threshold`).
+
+A single misheard ordinary word in a long sentence is tolerated, because Whisper makes those
+mistakes too ("assistants" vs. "assistance"). If Whisper keeps writing a word differently from
+your script (a name, or something newer than Whisper, like "ChatGPT", which it hears as
+"Chachi PT"), add the way Whisper writes it to `ACCEPTED_VARIANTS` in `selfcast/qa.py`.
+
+Transcribing takes about a second per sentence, and it runs during the rest that eco mode takes
+anyway, so it adds little to the render time. Turn it off with `--no-qa`.
 
 ## Recording tips
 
@@ -217,9 +247,10 @@ similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by
    `voices/<name>/conds-<engine>.pt`. That file is the clone.
 2. **Parse.** The script is cleaned of Markdown and split into sentence-sized chunks of up to
    280 characters, with pauses taken from the structure.
-3. **Synthesize.** Each chunk is generated with a fixed seed, trimmed, and checked against the
-   duration its word count implies. A take outside that range is regenerated (up to 2 retries).
-   Takes are cached by a hash of the text, voice and settings.
+3. **Synthesize.** Each chunk is generated with a fixed seed, trimmed, checked against the
+   duration its word count implies, and transcribed with Whisper. A take that fails either check
+   is regenerated with a new seed (up to 2 retries) and the best take is kept. Takes are cached
+   by a hash of the text, voice and settings, together with what Whisper heard.
 4. **Assemble.** Chunks and pauses are joined with short fades, normalized to -16 LUFS,
    peak-limited, and encoded with ffmpeg.
 

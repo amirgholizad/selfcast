@@ -33,6 +33,11 @@ ECO_REST_RATIO = 0.5          # rest 0.5 s for every 1 s spent generating
 ECO_MPS_MEMORY_FRACTION = 0.6  # of macOS's recommended GPU working set (~10.7 GB on 16 GB Macs)
 HEAVY_ENGINES = ("standard", "multilingual")  # peaked at ~18 GB on a 16 GB M4 (turbo: ~4-5 GB)
 
+# Whisper QA: every chunk is transcribed (openai/whisper-base.en, on the CPU) and compared
+# with its text; a take whose word error rate is above the threshold is re-taken.
+QA_DEFAULT = True
+QA_THRESHOLD = 0.1
+
 # Output
 PODCAST_LUFS = -16.0      # standard podcast loudness target
 WORDS_PER_MINUTE = 150    # rough speaking rate, for estimates only

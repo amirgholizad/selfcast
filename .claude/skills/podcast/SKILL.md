@@ -37,7 +37,7 @@ Run every command from the project root (the folder containing `pyproject.toml`)
    - Never run two renders at once.
 
 4. **Report** from the final `RESULT {...}` line: the output path as a link, the duration, and
-   any `flagged_chunks` or `notes`. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
+   any `flagged_chunks` (with the reason from `flag_reasons`, e.g. what Whisper heard) or `notes`. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
 
 Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, tagged), the
 `.script.md` that was read, and a `.chunks.txt` map giving the start time of every chunk.
@@ -51,7 +51,10 @@ Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, 
 - **Wording change**: edit the script file and re-run with `--out <same .mp3>`. Only changed chunks are re-generated.
 - **Mispronounced word**: respell it phonetically in the script ("Nguyen" → "Win"), and write
   out numbers or acronyms the way they should be said.
-- Chunks marked `!` in `.chunks.txt` came out an unusual length even after retries. Listen there first.
+- Chunks marked `!` in `.chunks.txt` still sounded off after retries: Whisper heard different words, or
+  the take was an unusual length. The reason is listed at the bottom of `.chunks.txt`. Listen there first,
+  and `--redo` them if they really are wrong. Whisper itself sometimes mishears names or new words: if a
+  flag is a false alarm, add the word's spelling as heard to `ACCEPTED_VARIANTS` in `selfcast/qa.py`.
 
 ## Options (podcast)
 
@@ -65,6 +68,7 @@ Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, 
 | `--engine turbo/standard/multilingual` | turbo | **standard/multilingual peaked at ~18 GB on a 16 GB Mac**: only on explicit request, warn first |
 | `--language xx` | en | multilingual only: ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh |
 | `--seed N` | 42 | a different take of the whole episode |
+| `--qa` / `--no-qa` | on | transcribe every chunk with Whisper (CPU) and re-take misread ones |
 
 ## Script syntax (all optional)
 
