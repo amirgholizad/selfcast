@@ -202,10 +202,29 @@ def chapter_count(path: Path) -> int | None:
     return len([ln for ln in proc.stdout.splitlines() if ln.strip()]) if proc.returncode == 0 else None
 
 
+LIMITER = "alimiter=limit=0.89:level=0"  # peaks at -1 dBFS
+
+
+def _loudness_after_limiter(wav: np.ndarray, sr: int, workdir: Path) -> float:
+    src, dst = workdir / "pre.wav", workdir / "limited.wav"
+    sf.write(src, wav.astype(np.float32), sr, subtype="FLOAT")
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(src), "-af", LIMITER,
+                           "-c:a", "pcm_f32le", str(dst)], capture_output=True)
+    if proc.returncode != 0:
+        return float("nan")
+    limited, _ = sf.read(dst, dtype="float32")
+    try:
+        return float(pyln.Meter(sr).integrated_loudness(limited))
+    except ValueError:  # shorter than one 400 ms block
+        return float("nan")
+
+
 def export(wav: np.ndarray, sr: int, out: Path, *, speed: float = 1.0, metadata: dict | None = None,
-           bitrate: str = "128k", chapters: list[dict] | None = None) -> None:
+           bitrate: str = "128k", chapters: list[dict] | None = None, loudness: float | None = None) -> None:
     """Write .mp3 / .m4a / .wav with a peak limiter (-1 dBFS) and optional tempo change.
-    `chapters` ([{start, title}], in output seconds) go in as ID3 CHAP frames / MP4 chapters."""
+    `loudness` (LUFS): the level to land on *after* the limiter, which otherwise takes ~1 dB off
+    speech with sharp peaks. `chapters` ([{start, title}], in output seconds) go in as ID3 CHAP
+    frames / MP4 chapters."""
     require_ffmpeg()
     out.parent.mkdir(parents=True, exist_ok=True)
     ext = out.suffix.lower()
@@ -217,24 +236,40 @@ def export(wav: np.ndarray, sr: int, out: Path, *, speed: float = 1.0, metadata:
     filters = []
     if abs(speed - 1.0) > 1e-3:
         filters.append(f"atempo={speed:.3f}")
-    filters.append("alimiter=limit=0.89:level=0")
+    filters.append(LIMITER)
     meta_args = []
     for key, value in (metadata or {}).items():
         if value:
             meta_args += ["-metadata", f"{key}={value}"]
     with tempfile.TemporaryDirectory() as td:
-        tmp = Path(td) / "mix.wav"
-        sf.write(tmp, wav.astype(np.float32), sr, subtype="FLOAT")  # float keeps overs for the limiter
-        inputs = ["-i", str(tmp)]
-        if chapters and ext in (".mp3", ".m4a"):
-            meta = Path(td) / "chapters.txt"
-            meta.write_text(_ffmetadata(chapters, len(wav) / sr / speed), encoding="utf-8")
-            inputs += ["-i", str(meta), "-map", "0:a", "-map_chapters", "1"]
-        cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y", *inputs, "-af", ",".join(filters),
-               "-ac", "1", "-ar", "44100", *codec, *meta_args, str(out)]
-        proc = subprocess.run(cmd, capture_output=True)
-        if proc.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed writing {out}:\n{proc.stderr.decode(errors='replace')[-800:]}")
+        def encode(audio: np.ndarray) -> None:
+            tmp = Path(td) / "mix.wav"
+            sf.write(tmp, audio.astype(np.float32), sr, subtype="FLOAT")  # float keeps overs for the limiter
+            inputs = ["-i", str(tmp)]
+            if chapters and ext in (".mp3", ".m4a"):
+                meta = Path(td) / "chapters.txt"
+                meta.write_text(_ffmetadata(chapters, len(audio) / sr / speed), encoding="utf-8")
+                inputs += ["-i", str(meta), "-map", "0:a", "-map_chapters", "1"]
+            cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y", *inputs, "-af", ",".join(filters),
+                   "-ac", "1", "-ar", "44100", *codec, *meta_args, str(out)]
+            proc = subprocess.run(cmd, capture_output=True)
+            if proc.returncode != 0:
+                raise RuntimeError(f"ffmpeg failed writing {out}:\n{proc.stderr.decode(errors='replace')[-800:]}")
+
+        if loudness is not None:
+            for _ in range(4):  # the limiter lowers loudness a little: make it up and limit again
+                measured = _loudness_after_limiter(wav, sr, Path(td))
+                if not np.isfinite(measured) or abs(measured - loudness) < 0.1:
+                    break
+                wav = (wav * 10 ** ((loudness - measured) / 20)).astype(np.float32)
+        encode(wav)
+        if loudness is not None and ext != ".wav":  # lossy encoding costs another ~0.5 dB
+            try:
+                got = float(pyln.Meter(44100).integrated_loudness(decode(out, 44100)))
+            except ValueError:
+                got = float("nan")
+            if np.isfinite(got) and abs(got - loudness) > 0.15:
+                encode((wav * 10 ** ((loudness - got) / 20)).astype(np.float32))
 
 
 # --------------------------------------------------------------------------- mastering a recording

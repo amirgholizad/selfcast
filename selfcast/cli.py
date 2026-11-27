@@ -154,7 +154,7 @@ def cmd_clone(args: argparse.Namespace) -> None:
     # 3) Preview + a rough similarity score
     log("Rendering a short preview ...")
     wav = trim_silence(eng.synthesize(args.preview_text, seed=42, language="en"), eng.sr)
-    export(gain_to_lufs(wav, eng.sr, C.PODCAST_LUFS), eng.sr, voice.preview,
+    export(gain_to_lufs(wav, eng.sr, C.PODCAST_LUFS), eng.sr, voice.preview, loudness=C.PODCAST_LUFS,
            metadata={"title": "Voice preview", "artist": args.display_name or args.name})
     sims[eng.name] = round(float(eng.speaker_embedding(ref, C.REF_SR) @ eng.speaker_embedding(wav, eng.sr)), 3)
 
@@ -464,7 +464,7 @@ def cmd_podcast(args: argparse.Namespace) -> None:
 
     episode_chapters = chapters(items, {i: t / args.speed for i, t in starts.items()}, title)
     artist = meta.get("display_name", voice.name)
-    export(mix, sr, out, speed=args.speed, chapters=episode_chapters, metadata={
+    export(mix, sr, out, speed=args.speed, chapters=episode_chapters, loudness=C.PODCAST_LUFS, metadata={
         "title": title, "artist": artist, "album_artist": artist, "album": args.show or "Podcast",
         "date": str(dt.date.today().year), "genre": "Podcast",
         "comment": "Synthetic voice (cloned with consent; Chatterbox TTS, watermarked)"})
@@ -611,7 +611,7 @@ def cmd_master(args: argparse.Namespace) -> None:
         elif raw_script is not None:
             notes.append("The script has no ## headings, so there are no chapters.")
 
-    export(mix, MASTER_SR, out, chapters=chapters, metadata={
+    export(mix, MASTER_SR, out, chapters=chapters, loudness=C.PODCAST_LUFS, metadata={
         "title": title, "artist": args.artist, "album_artist": args.artist, "album": args.show or "Podcast",
         "date": str(dt.date.today().year), "genre": "Podcast"})
     chapters_path, transcript_path = out.with_suffix(".chapters.json"), out.with_suffix(".transcript.txt")
