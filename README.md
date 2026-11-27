@@ -186,6 +186,7 @@ heard = ["Self cast"]     # how Whisper may write it, so the quality check accep
 
 ```sh
 uv run selfcast clone   --recording FILE [--name me] [--display-name "Your Name"] [--force] [--default]
+                        [--ref-start SECONDS|auto] [--ref-seconds 60]
 uv run selfcast podcast --file SCRIPT.md | --text "..." [options]
 uv run selfcast voices
 ```
@@ -283,7 +284,19 @@ The clone copies your recording, room and all, so the recording matters more tha
 - 30-60 seconds of continuous speech, one speaker, with no music or TV in the background.
 - A quiet room with soft furnishings (less echo). A phone or laptop mic is fine at ~20 cm, held at a steady distance.
 - Speak the way you want the podcast to sound. The clone copies energy and pace as well as timbre.
-- Longer recordings are fine, but only the first 60 seconds of speech are used.
+- Longer recordings are fine, but only 60 seconds of speech are used (`--ref-seconds`).
+
+**Why the start of your recording matters most.** Chatterbox Turbo doesn't learn from your whole
+recording equally. Its speech prompt, which sets the delivery (pace, intonation, energy), is built
+from the **first 15 seconds** of the reference, and the decoder that shapes the sound uses the
+**first 10 seconds**. Only the speaker embedding (the timbre) hears the full 60 seconds. Most
+recordings start with a careful, slightly stiff intro, and that is the style every episode copies.
+
+- `--ref-start 42` starts the reference 42 seconds into the recording, if you know where you warmed up.
+- `--ref-start auto` scores every 15-second stretch of speech (signal-to-noise, a pace typical of the
+  rest of the recording, pitch variation, and similarity to your overall voice) and puts the best
+  one first. The rest of the speech follows, so the speaker embedding still hears all of it. The
+  chosen window is printed and saved in `voices/<name>/profile.json`.
 
 `clone` warns you about background noise, clipping or too little speech, and prints a speaker
 similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by ear.

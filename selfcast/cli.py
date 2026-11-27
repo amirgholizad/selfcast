@@ -83,12 +83,28 @@ def cmd_clone(args: argparse.Namespace) -> None:
     voice = Voice(args.name)
     if voice.dir.exists() and not args.force:
         die(f"voice '{args.name}' already exists. Re-run with --force to replace it.")
+    auto = str(args.ref_start).lower() == "auto"
+    try:
+        ref_start = 0.0 if auto else float(args.ref_start)
+    except ValueError:
+        die("--ref-start must be a number of seconds or 'auto'")
+    if ref_start < 0 or not C.MIN_REF_SECONDS <= args.ref_seconds <= 300:
+        die(f"--ref-start must be >= 0 and --ref-seconds between {C.MIN_REF_SECONDS:.0f} and 300")
 
     # 1) Clean the recording into a reference clip
     log(f"Reading {src.name} ...")
     raw = decode(src, C.REF_SR, highpass_hz=70)
     raw_stats = analyze(raw, C.REF_SR)
-    ref = condense_pauses(raw, C.REF_SR)[: int(C.MAX_REF_SECONDS * C.REF_SR)]
+    if ref_start >= raw_stats["seconds"]:
+        die(f"--ref-start {ref_start:g}s is past the end of the recording ({raw_stats['seconds']:.1f}s)")
+    offset = int(ref_start * C.REF_SR)
+    speech, seg_map = condense_pauses(raw[offset:], C.REF_SR, return_map=True)
+    window_info, eng = None, None
+    if auto:
+        eng, window_info, speech = _choose_reference_window(raw, speech, seg_map, args)
+    ref = speech[: int(args.ref_seconds * C.REF_SR)]
+    if window_info is None:
+        window_info = {"mode": "start", "start_sec": round(ref_start, 2)}
     ref = gain_to_lufs(ref, C.REF_SR, C.REF_LUFS)
     if (peak := float(abs(ref).max(initial=0.0))) > 0.95:
         ref = ref * (0.95 / peak)
@@ -105,8 +121,9 @@ def cmd_clone(args: argparse.Namespace) -> None:
                         "The clone copies the room too; a quieter recording will sound better.")
     if raw_stats["clipped_pct"] > 0.1:
         warnings.append("The recording clips (too loud / too close to the mic) - distortion will carry over.")
-    if raw_stats["seconds"] > 5 * 60:
-        warnings.append(f"Long recording; only the first {C.MAX_REF_SECONDS:.0f}s of speech are used.")
+    if raw_stats["seconds"] > 5 * 60 and not auto:
+        warnings.append(f"Long recording; only {args.ref_seconds:.0f}s of speech are used. Try --ref-start auto "
+                        "to pick the best stretch.")
 
     if voice.dir.exists():  # --force: replace the old profile entirely
         shutil.rmtree(voice.dir)
@@ -120,10 +137,14 @@ def cmd_clone(args: argparse.Namespace) -> None:
 
     preview_engine, sims = None, {}
     t0 = time.time()
+    first = eng  # already loaded to score windows in auto mode
     for name in engines:
         heavy_engine_warning(name)
         log(f"Cloning voice for the {name} engine ...")
-        eng = Engine(name, device=args.device, power=args.power, log=log)
+        if first is None or first.name != name:
+            eng = Engine(name, device=args.device, power=args.power, log=log)
+        else:
+            eng, first = first, None
         eng.use_voice(voice)
         if preview_engine is None:
             preview_engine = eng
@@ -142,6 +163,7 @@ def cmd_clone(args: argparse.Namespace) -> None:
         "created": dt.datetime.now().isoformat(timespec="seconds"),
         "source_file": str(src),
         "reference_seconds": round(ref_seconds, 2),
+        "reference_window": window_info,
         "recording": raw_stats,
         "warnings": warnings,
         "speaker_similarity": sims,
@@ -156,8 +178,49 @@ def cmd_clone(args: argparse.Namespace) -> None:
     for w in warnings:
         log(f"  ! {w}")
     result({"voice": args.name, "dir": str(voice.dir), "preview": str(voice.preview),
-            "reference_seconds": round(ref_seconds, 2), "speaker_similarity": sims[eng.name],
+            "reference_seconds": round(ref_seconds, 2), "reference_window": window_info,
+            "speaker_similarity": sims[eng.name],
             "warnings": warnings, "default": default_voice_name() == args.name})
+
+
+def _choose_reference_window(raw, speech, seg_map, args):
+    """--ref-start auto: score every 15 s stretch of speech and put the best one first, since
+    Turbo builds its speech prompt from the first 15 s of the reference (the decoder from the
+    first 10 s); only the speaker embedding hears the rest. Returns (engine, info, speech)."""
+    import librosa
+    import numpy as np
+
+    from .audio import REF_WINDOW, best_window_first, rank_windows, to_source_time, window_features
+    from .engine import Engine
+
+    scan = speech[: int(C.REF_SCAN_SECONDS * C.REF_SR)]
+    if len(scan) < (REF_WINDOW + 2.5) * C.REF_SR:
+        log("Recording too short to choose a window; using it from the start.")
+        return None, None, speech
+    log(f"Looking for the best {REF_WINDOW:.0f}s of speech in {len(scan) / C.REF_SR:.0f}s ...")
+    rms = librosa.feature.rms(y=raw, frame_length=int(0.03 * C.REF_SR), hop_length=int(0.015 * C.REF_SR))[0]
+    noise_floor = float(np.percentile(20 * np.log10(rms + 1e-9), 10))
+    feats = window_features(scan, C.REF_SR, noise_floor)
+    heavy_engine_warning(args.engines.split(",")[0].strip())
+    eng = Engine(args.engines.split(",")[0].strip(), device=args.device, power=args.power, log=log)
+    whole = eng.speaker_embedding(scan, C.REF_SR)
+    n = int(REF_WINDOW * C.REF_SR)
+    sims = [float(eng.speaker_embedding(scan[int(f["start"] * C.REF_SR):][:n], C.REF_SR) @ whole) for f in feats]
+    scores = rank_windows(feats, sims)
+    for f, sim, sc in zip(feats, sims, scores):
+        f.update(similarity=round(sim, 3), score=sc, source_start=round(to_source_time(f["start"], seg_map, C.REF_SR), 1))
+    ranked = sorted(feats, key=lambda f: -f["score"])
+    first = feats[0]
+    log("  start   score   SNR   pace   pitch  similarity")
+    for f in ranked[:3] + ([first] if first not in ranked[:3] else []):
+        tag = "  <- chosen" if f is ranked[0] else ("  (the very start)" if f is first else "")
+        log(f"  {clock(f['source_start'])} {f['score']:6.2f} {f['snr_db']:5.0f}dB {f['rate']:4.1f}/s "
+            f"{f['pitch_var']:5.2f}st  {f['similarity']:.3f}{tag}")
+    best = ranked[0]
+    info = {"mode": "auto", "start_sec": best["source_start"], "seconds": REF_WINDOW,
+            "score": best["score"], "first_window_score": first["score"],
+            "features": {k: best[k] for k in ("snr_db", "rate", "pitch_var", "similarity")}}
+    return eng, info, best_window_first(speech, C.REF_SR, best["start"], REF_WINDOW, args.ref_seconds)
 
 
 # --------------------------------------------------------------------------- podcast
@@ -464,6 +527,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="engines to prepare now, comma-separated (others are prepared on first use)")
     c.add_argument("--force", action="store_true", help="replace an existing profile with this name")
     c.add_argument("--default", action="store_true", help="make this the default voice")
+    c.add_argument("--ref-start", default="0",
+                   help="where the reference starts, in seconds into the recording, or 'auto' to pick the best "
+                        "15 s of speech and put it first (the model's style comes from the first 10-15 s)")
+    c.add_argument("--ref-seconds", type=float, default=C.MAX_REF_SECONDS,
+                   help=f"seconds of speech to keep (default {C.MAX_REF_SECONDS:.0f})")
     c.add_argument("--preview-text", default=C.PREVIEW_TEXT)
     power_args(c)
     c.set_defaults(func=cmd_clone)

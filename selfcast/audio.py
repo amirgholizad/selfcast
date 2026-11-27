@@ -47,25 +47,104 @@ def analyze(wav: np.ndarray, sr: int) -> dict:
 
 
 def condense_pauses(wav: np.ndarray, sr: int, top_db: float = 40, max_gap: float = 0.35,
-                    edge: float = 0.1) -> np.ndarray:
+                    edge: float = 0.1, return_map: bool = False):
     """Trim leading/trailing silence and shorten long pauses, so the model's limited
-    conditioning window (first ~6-15 s) is filled with actual speech."""
+    conditioning window (first ~10-15 s) is filled with actual speech.
+    With `return_map`, also return [(start in the output, start in `wav`, length)] in samples."""
     intervals = librosa.effects.split(wav, top_db=top_db, frame_length=1024, hop_length=256)
     if len(intervals) == 0:
-        return wav[:0]
+        return (wav[:0], []) if return_map else wav[:0]
     half_gap, edge_n = int(max_gap * sr) // 2, int(edge * sr)
-    pieces, prev_end = [], None
+    spans, prev_end = [], None  # (start, end) in wav, in output order
     for start, end in intervals:
         if prev_end is None:
-            pieces.append(wav[max(0, start - edge_n):start])
+            spans.append((max(0, start - edge_n), start))
         elif start - prev_end > 2 * half_gap:
-            pieces += [wav[prev_end:prev_end + half_gap], wav[start - half_gap:start]]
+            spans += [(prev_end, prev_end + half_gap), (start - half_gap, start)]
         else:
-            pieces.append(wav[prev_end:start])
-        pieces.append(wav[start:end])
+            spans.append((prev_end, start))
+        spans.append((start, end))
         prev_end = end
-    pieces.append(wav[prev_end:prev_end + edge_n])
-    return np.concatenate(pieces)
+    spans.append((prev_end, min(len(wav), prev_end + edge_n)))
+    out = np.concatenate([wav[a:b] for a, b in spans])
+    if not return_map:
+        return out
+    seg_map, pos = [], 0
+    for a, b in spans:
+        seg_map.append((pos, a, b - a))
+        pos += b - a
+    return out, seg_map
+
+
+def to_source_time(t: float, seg_map: list, sr: int) -> float:
+    """Map a time in condensed audio back to the original recording (seconds)."""
+    n = int(t * sr)
+    for out_start, src_start, length in seg_map:
+        if out_start <= n < out_start + length:
+            return (src_start + n - out_start) / sr
+    return (seg_map[-1][1] + seg_map[-1][2]) / sr if seg_map else t
+
+
+# --------------------------------------------------------------------------- reference windows
+
+REF_WINDOW = 15.0  # Turbo's speech prompt uses the first 15 s of the reference (the decoder, 10 s)
+
+
+def window_features(speech: np.ndarray, sr: int, noise_floor_db: float, window: float = REF_WINDOW,
+                    hop: float = 2.5) -> list[dict]:
+    """Stats for each `window`-second stretch of condensed speech: start (s), snr_db (loud frames
+    over the recording's noise floor), rate (onsets per second, a speech-rate proxy) and
+    pitch_var (spread of the pitch in semitones, from librosa's pyin)."""
+    y = librosa.resample(speech.astype(np.float32), orig_sr=sr, target_sr=16000)
+    hop_len, fps = 512, 16000 / 512
+    f0, voiced, _ = librosa.pyin(y, fmin=65, fmax=400, sr=16000, frame_length=2048, hop_length=hop_len)
+    db = 20 * np.log10(librosa.feature.rms(y=y, frame_length=1024, hop_length=hop_len)[0] + 1e-9)
+    onsets = librosa.onset.onset_detect(y=y, sr=16000, hop_length=hop_len, units="time")
+    feats, t, total = [], 0.0, len(y) / 16000
+    while t + window <= total + 1e-6:
+        a, b = int(t * fps), int((t + window) * fps)
+        f = f0[a:b][voiced[a:b]]
+        semis = 12 * np.log2(f / np.median(f)) if len(f) > 20 else np.zeros(1)
+        feats.append({"start": round(t, 2),
+                      "snr_db": round(float(np.percentile(db[a:b], 90) - noise_floor_db), 1),
+                      "rate": round(float(np.sum((onsets >= t) & (onsets < t + window)) / window), 2),
+                      "pitch_var": round(float(np.std(semis)), 2)})
+        t += hop
+    return feats
+
+
+def _z(values) -> np.ndarray:
+    v = np.asarray(values, dtype=float)
+    return (v - v.mean()) / (v.std() + 1e-9)
+
+
+def rank_windows(feats: list[dict], similarity: list[float]) -> list[float]:
+    """Score each window (higher is better): clean (SNR), a typical pace for this speaker rather
+    than the slow, careful start most recordings have, lively pitch, and sounding like the rest
+    of the recording (speaker similarity). Each term is a z-score, capped so no single one wins."""
+    snr = np.clip(_z([f["snr_db"] for f in feats]), -3, 1.5)
+    pace = -np.abs(_z([f["rate"] for f in feats]))
+    pitch = np.clip(_z([f["pitch_var"] for f in feats]), -3, 1.5)
+    sim = np.clip(_z(similarity), -3, 1.5)
+    return [round(float(x), 2) for x in snr + pace + pitch + sim]
+
+
+def best_window_first(speech: np.ndarray, sr: int, start: float, window: float, total: float) -> np.ndarray:
+    """The chosen window, then the speech that follows it, then what came before, up to `total`
+    seconds, joined with 20 ms crossfades."""
+    a, b = int(start * sr), int((start + window) * sr)
+    pieces = [p for p in (speech[a:b], speech[b:], speech[:a]) if len(p)]
+    xf = int(0.02 * sr)
+    out = pieces[0]
+    for p in pieces[1:]:
+        if len(out) >= total * sr:
+            break
+        if len(p) > 2 * xf and len(out) > 2 * xf:
+            ramp = np.linspace(0, 1, xf, dtype=np.float32)
+            out = np.concatenate([out[:-xf], out[-xf:] * ramp[::-1] + p[:xf] * ramp, p[xf:]])
+        else:
+            out = np.concatenate([out, p])
+    return out[: int(total * sr)]
 
 
 def gain_to_lufs(wav: np.ndarray, sr: int, target: float) -> np.ndarray:

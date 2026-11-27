@@ -22,6 +22,7 @@ REF_SR = 24000
 MIN_REF_SECONDS = 6.0     # Turbo refuses anything under 5 s of speech
 GOOD_REF_SECONDS = 15.0   # below this we warn that likeness may suffer
 MAX_REF_SECONDS = 60.0    # more than this adds nothing
+REF_SCAN_SECONDS = 300.0  # --ref-start auto looks for the best window in this much speech
 REF_LUFS = -20.0
 
 # Power / memory. "eco" (default) trades speed for a cool, responsive laptop:
