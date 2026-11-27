@@ -13,7 +13,10 @@ weights are cached in `~/.cache/huggingface`.
 
 ## Constraints
 
-- **Memory and power:** the default is the `turbo` engine in `--power eco` (~4-5 GB peak).
+- **Memory and power:** the default is the `turbo` engine in `--power eco` (~7 GB process peak,
+  flat over an episode; the end-of-render line prints it). Turbo's decoding is patched in
+  `engine.py` to keep tensor shapes fixed: PyTorch on Apple GPUs caches a graph per shape and
+  never frees it, which used to add ~5 GB over an episode. Keep that if you touch synthesis.
   `standard` and `multilingual` peaked at ~18 GB on a 16 GB Mac and pushed it into heavy swap:
   use them only on explicit request. Never run two renders at once.
 - Python is pinned to 3.11 (chatterbox pins torch 2.6). `setuptools<81` is required because the

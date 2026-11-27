@@ -31,8 +31,8 @@ Done in 2m 10s: podcasts/2026-11-27-the-two-minute-rule/2026-11-27-the-two-minut
 - **Fully local.** Uses the Apple GPU on Apple Silicon Macs (CUDA on NVIDIA machines). The model
   weights download once (~2.8 GB), and after that it works offline.
 - **Light on your laptop.** The default *eco* mode runs at low priority on 2 CPU threads, with a
-  GPU memory cap and short rests between sentences. It peaked at under 5 GB of memory on a
-  16 GB MacBook Air, and the machine stayed responsive.
+  GPU memory cap and short rests between sentences. A render peaks at about 7 GB of memory on a
+  16 GB MacBook Air, and that doesn't grow with the length of the episode.
 - **Write scripts in Markdown.** Headings, lists, `[pause 2s]`, author notes that aren't read
   aloud, and expressive tags like `[laugh]`, `[sigh]` and `[whispering]`.
 - **Podcast-ready output.** 44.1 kHz MP3 at -16 LUFS (the usual podcast loudness), peaks limited
@@ -53,7 +53,7 @@ Selfcast was built and tested on a **MacBook Air M4 with 16 GB of RAM, running m
 | Platform | Status |
 | --- | --- |
 | Apple Silicon Mac (M1-M4), 16 GB+ | **Supported.** Tested on M4 / 16 GB. Uses the Apple GPU (MPS). |
-| Apple Silicon Mac, 8 GB | Untested. Turbo peaks at ~4-5 GB, so close other apps first. |
+| Apple Silicon Mac, 8 GB | Untested. Turbo peaks at ~7 GB, so close other apps first and expect some swapping. |
 | Intel Mac | **Not supported.** Chatterbox needs PyTorch 2.6, which has no Intel macOS builds. |
 | Linux or Windows with an NVIDIA GPU | Should work (CUDA is picked automatically) but is untested. |
 | Linux or Windows, CPU only | Should work but is untested, and will be slow. |
@@ -223,10 +223,15 @@ Measured on a MacBook Air M4 / 16 GB:
 
 | | Peak memory | Speed |
 | --- | --- | --- |
-| Clone a voice (turbo, eco) | ~3.8 GB | ~30-45 s |
-| `turbo`, eco (default) | ~3.7-4.9 GB | ~1.4-1.6× real time, plus ~20 s to load (a 1m18s episode took 2m10s) |
+| Clone a voice (turbo, eco) | ~6.5 GB | ~30-60 s (`--ref-start auto` adds ~30 s) |
+| `turbo`, eco (default) | **~7 GB**, flat however long the episode | ~1.5-2× real time, plus ~20 s to load |
 | `turbo`, `--power fast` | higher (no GPU cap) | ~0.75× real time after warm-up |
 | `standard` / `multilingual` | **~18 GB** | ~3.5× real time. On a 16 GB Mac this pushes the machine into heavy swap. |
+
+"Peak memory" is the whole process (what Activity Monitor shows), printed at the end of every
+render as `process peak`, next to the GPU's share of it. Of the ~7 GB, ~3 GB is the model on the
+GPU, ~2 GB the Python libraries, 0.4 GB the Whisper quality check (`--no-qa` saves it), and ~1 GB
+a temporary bump while the longest sentences are decoded.
 
 Eco mode lowers the process priority, uses 2 CPU threads, caps GPU memory and rests between
 sentences, so your machine stays usable while an episode renders. Use `--power fast` when the

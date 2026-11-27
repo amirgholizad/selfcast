@@ -35,7 +35,8 @@ Then check:
 - [ ] `.chunks.txt` timestamps line up with what you hear
 - [ ] Re-running the same command renders nothing new (everything comes from the cache)
 - [ ] `--redo` re-takes only the chunks you named
-- [ ] Peak GPU memory (printed at the end) didn't grow noticeably in eco mode
+- [ ] The process peak memory (printed at the end) didn't grow noticeably in eco mode (~7 GB for
+      `scripts/example.md`), and doesn't grow with a longer script
 - [ ] No errors or new warnings in the output
 
 If you changed `selfcast/text.py` or `selfcast/normalize.py`, try a script with headings, lists,

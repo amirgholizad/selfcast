@@ -32,7 +32,7 @@ Run every command from the project root (the folder containing `pyproject.toml`)
 
    - For anything over ~1 minute of audio, run it with Bash `run_in_background: true`. You're
      notified when it exits, so don't poll it.
-   - Keep `--power eco` (the default). It takes ~4-5 GB of memory and leaves the machine
+   - Keep `--power eco` (the default). It takes ~7 GB of memory and leaves the machine
      responsive. Use `--power fast` only if the user asks for speed.
    - Never run two renders at once.
 

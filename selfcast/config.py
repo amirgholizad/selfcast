@@ -33,7 +33,7 @@ ECO_THREADS = 2
 ECO_NICE = 10
 ECO_REST_RATIO = 0.5          # rest 0.5 s for every 1 s spent generating
 ECO_MPS_MEMORY_FRACTION = 0.6  # of macOS's recommended GPU working set (~10.7 GB on 16 GB Macs)
-HEAVY_ENGINES = ("standard", "multilingual")  # peaked at ~18 GB on a 16 GB M4 (turbo: ~4-5 GB)
+HEAVY_ENGINES = ("standard", "multilingual")  # peaked at ~18 GB on a 16 GB M4 (turbo: ~7 GB)
 
 # Whisper QA: every chunk is transcribed (openai/whisper-base.en, on the CPU) and compared
 # with its text; a take whose word error rate is above the threshold is re-taken.

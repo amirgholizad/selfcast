@@ -113,6 +113,131 @@ def peak_memory_gb() -> float:
     return peak / 1e9 if sys.platform == "darwin" else peak * 1024 / 1e9
 
 
+# --------------------------------------------------------------------------- fixed-shape decoding
+
+CACHE_BUCKET = 256  # static KV cache lengths are rounded up to this, so most chunks share one size
+S3GEN_BUCKET = 50   # S3Gen input is padded with silence to a multiple of this many tokens (2 s)
+
+
+def _static_cache(t3, length: int):
+    """One StaticCache per model, reused (cleared) for every chunk, so every chunk decodes with
+    the same tensor shapes. It's only replaced when a chunk needs a longer one.
+
+    StaticCache writes new keys/values with index_copy_, which the Apple GPU lacks: with the CPU
+    fallback on, every step copied the whole cache to the CPU and back (~115 ms per token). So
+    each layer writes with plain index assignment instead, which runs on the GPU."""
+    from transformers.cache_utils import StaticCache
+
+    cache = getattr(t3, "_selfcast_cache", None)
+    if cache is not None and cache.max_cache_len >= length:
+        cache.reset()
+        return cache
+    if cache is not None:  # break the layer <-> update cycles so the old tensors are freed now
+        for layer in cache.layers:
+            layer.__dict__.pop("update", None)
+        t3._selfcast_cache = cache = None
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    cache = StaticCache(config=t3.tfmr.config, max_cache_len=length)
+    for layer in cache.layers:
+        def update(key_states, value_states, cache_kwargs=None, layer=layer):
+            if not layer.is_initialized:
+                layer.lazy_initialization(key_states, value_states)
+            pos = cache_kwargs["cache_position"]
+            layer.keys[:, :, pos] = key_states
+            layer.values[:, :, pos] = value_states
+            return layer.keys, layer.values
+        layer.update = update
+    t3._selfcast_cache = cache
+    return cache
+
+
+def _s3gen_bucketed(inference, silence_token: int):
+    """Wrap S3Gen.inference so its input length is always a multiple of S3GEN_BUCKET tokens
+    (padded with the silence token), and cut the padding off the audio again. An episode then
+    uses a handful of input shapes instead of a new one per chunk, so PyTorch's per-shape graph
+    cache on Apple GPUs stops growing."""
+    def wrapped(speech_tokens, *args, **kwargs):
+        n = speech_tokens.size(-1)
+        target = -(-n // S3GEN_BUCKET) * S3GEN_BUCKET
+        if target > n:
+            pad = torch.full((*speech_tokens.shape[:-1], target - n), silence_token,
+                             dtype=speech_tokens.dtype, device=speech_tokens.device)
+            speech_tokens = torch.cat([speech_tokens, pad], dim=-1)
+        wav, source = inference(speech_tokens, *args, **kwargs)
+        return wav[..., : round(wav.size(-1) * n / target)], source
+    return wrapped
+
+
+def _turbo_inference_fixed_shapes(self, t3_cond, text_tokens, temperature=0.8, top_k=1000, top_p=0.95,
+                                  repetition_penalty=1.2, max_gen_len=1000):
+    """Drop-in replacement for chatterbox's T3.inference_turbo with the same sampling, but every
+    decoding step runs on tensors of the same shape.
+
+    The original grows its key/value cache and its repetition-penalty input by one token per step.
+    On Apple GPUs PyTorch compiles and keeps a graph for every new tensor shape, and never frees
+    them: over an episode that added ~5 GB of memory outside the GPU allocator. Here the cache is
+    a preallocated StaticCache (attention masks the unused tail), and the repetition penalty uses
+    a fixed-size "seen tokens" mask, which gives the same result as penalizing each generated token.
+    """
+    import torch.nn.functional as F
+    from transformers.generation.logits_process import (LogitsProcessorList, TemperatureLogitsWarper,
+                                                        TopKLogitsWarper, TopPLogitsWarper)
+
+    warpers = LogitsProcessorList()
+    if temperature > 0 and temperature != 1.0:
+        warpers.append(TemperatureLogitsWarper(temperature))
+    if top_k > 0:
+        warpers.append(TopKLogitsWarper(top_k))
+    if top_p < 1.0:
+        warpers.append(TopPLogitsWarper(top_p))
+
+    def penalize(logits, seen):
+        if repetition_penalty == 1.0:
+            return logits
+        hit = torch.where(logits < 0, logits * repetition_penalty, logits / repetition_penalty)
+        return torch.where(seen, hit, logits)
+
+    def sample(logits, seen):
+        # same order as the original: temperature, top-k, top-p, then the repetition penalty
+        logits = penalize(warpers(None, logits), seen)
+        return torch.multinomial(F.softmax(logits, dim=-1), num_samples=1)
+
+    start = self.hp.start_speech_token * torch.ones_like(text_tokens[:, :1])
+    embeds, _ = self.prepare_input_embeds(t3_cond=t3_cond, text_tokens=text_tokens, speech_tokens=start,
+                                          cfg_weight=0.0)
+    prompt_len = embeds.size(1)
+    cache_len = -(-(prompt_len + max_gen_len + 1) // CACHE_BUCKET) * CACHE_BUCKET
+    cache = _static_cache(self, cache_len)
+    out = self.tfmr(inputs_embeds=embeds, past_key_values=cache, use_cache=True,
+                    cache_position=torch.arange(prompt_len, device=embeds.device))
+    logits = self.speech_head(out[0][:, -1:])[:, -1, :]
+
+    vocab = logits.size(-1)
+    seen = torch.zeros(1, vocab, dtype=torch.bool, device=logits.device)
+    seen[0, start[0, 0]] = start[0, 0] < vocab  # the original penalizes the start token on step one
+    token = sample(logits, seen)
+    seen = torch.zeros_like(seen)
+    tokens = [token]
+    position = torch.tensor([prompt_len], device=embeds.device)
+    for _ in range(max_gen_len):
+        seen.scatter_(1, token, True)
+        out = self.tfmr(inputs_embeds=self.speech_emb(token), past_key_values=cache, use_cache=True,
+                        cache_position=position)
+        position += 1
+        logits = self.speech_head(out[0])[:, -1, :]
+        if torch.all(torch.isinf(logits) & (logits < 0)):
+            break
+        token = sample(logits, seen)
+        tokens.append(token)
+        if torch.all(token == self.hp.stop_speech_token):
+            break
+    all_tokens = torch.cat(tokens, dim=1)
+    if all_tokens.size(1) > 0 and all_tokens[0, -1] == self.hp.stop_speech_token:
+        all_tokens = all_tokens[:, :-1]
+    return all_tokens
+
+
 class Engine:
     def __init__(self, name: str, device: str | None = None, power: str = "eco", log=print):
         if name not in MODELS:
@@ -124,6 +249,13 @@ class Engine:
         ckpt = _checkpoint_dir(name, log)
         with _quiet():
             self.model = _model_class(name).from_local(ckpt, self.device)
+        if name == "turbo":
+            import types
+
+            from chatterbox.models.s3gen.const import S3GEN_SIL
+
+            self.model.t3.inference_turbo = types.MethodType(_turbo_inference_fixed_shapes, self.model.t3)
+            self.model.s3gen.inference = _s3gen_bucketed(self.model.s3gen.inference, S3GEN_SIL)
         self.sr: int = self.model.sr
 
     def use_voice(self, voice: Voice) -> str:

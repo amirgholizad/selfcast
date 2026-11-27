@@ -43,7 +43,7 @@ def human(sec: float) -> str:
 
 def heavy_engine_warning(engine: str) -> None:
     if engine in C.HEAVY_ENGINES:
-        log(f"WARNING: the '{engine}' engine peaked at ~18 GB of memory in testing (turbo needs ~4-5 GB) "
+        log(f"WARNING: the '{engine}' engine peaked at ~18 GB of memory in testing (turbo needs ~7 GB) "
             "and will be slow. Close other apps first.")
 
 
@@ -133,7 +133,7 @@ def cmd_clone(args: argparse.Namespace) -> None:
     log(f"Reference clip: {ref_seconds:.1f}s of speech (from {raw_stats['seconds']:.1f}s recording)")
 
     # 2) Compute and cache the voice conditioning ("the clone") for each requested engine
-    from .engine import Engine
+    from .engine import Engine, peak_memory_gb
 
     preview_engine, sims = None, {}
     t0 = time.time()
@@ -174,7 +174,7 @@ def cmd_clone(args: argparse.Namespace) -> None:
 
     log(f"\nVoice '{args.name}' is ready ({human(time.time() - t0)}). Preview: {voice.preview}")
     log(f"Speaker similarity, reference vs. preview: {sims[eng.name]:.2f} (0-1, higher = closer)"
-        f" | peak GPU memory {eng.peak_gpu_gb:.1f} GB")
+        f" | peak memory {peak_memory_gb():.1f} GB (GPU {eng.peak_gpu_gb:.1f} GB)")
     for w in warnings:
         log(f"  ! {w}")
     result({"voice": args.name, "dir": str(voice.dir), "preview": str(voice.preview),
