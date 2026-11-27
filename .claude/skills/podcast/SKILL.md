@@ -62,6 +62,20 @@ the start time of every chunk.
   and `--redo` them if they really are wrong. Whisper itself sometimes mishears names or new words: if a
   flag is a false alarm, add the word's spelling as heard to `pronunciations.toml` (see the README).
 
+## The user recorded it themselves
+
+If the user hands over **their own recording** of a script (not text to synthesize), master it
+instead of rendering:
+
+```bash
+uv run selfcast master --recording "<file>" --script scripts/<file>.md
+```
+
+It denoises, shortens long pauses, normalizes to -16 LUFS / -1 dBFS and writes chapters from the
+script's `##` headings (CPU only, ~1 minute per 5 minutes of audio). Report from `RESULT`: output,
+`duration_sec` vs `original_sec`, `pauses_shortened`, `chapter_count`, and any `missing_sections`
+(headings it couldn't find in the recording). Recordings are private: never commit or share them.
+
 ## Options (podcast)
 
 | Flag | Default | Notes |

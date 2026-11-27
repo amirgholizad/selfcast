@@ -5,11 +5,13 @@ MIT). Developed and tested on a MacBook Air M4 / 16 GB. Everything runs offline 
 weights are cached in `~/.cache/huggingface`.
 
 - Skills: `/clone-voice` (one-time: recording → `voices/<name>/`) and `/podcast` (script → `podcasts/`).
-- CLI: `uv run selfcast {clone,podcast,voices}`. Every command ends with a `RESULT {json}` line,
+- CLI: `uv run selfcast {clone,podcast,master,voices}`. Every command ends with a `RESULT {json}` line,
   which the skills parse, so keep it backwards compatible.
-- Code: `selfcast/text.py` (script parsing and chunking), `selfcast/engine.py` (model loading,
-  cached voice conditioning, synthesis, power modes), `selfcast/audio.py` (ffmpeg I/O, loudness),
-  `selfcast/cli.py`, `selfcast/voices.py`, `selfcast/config.py`.
+- Code: `selfcast/text.py` (script parsing, chunking, pacing, chapters), `selfcast/normalize.py`
+  (numbers, acronyms, colons, `pronunciations.toml`), `selfcast/qa.py` (Whisper checks, word
+  timestamps), `selfcast/engine.py` (model loading, cached voice conditioning, synthesis, power
+  modes), `selfcast/audio.py` (ffmpeg I/O, loudness, VAD), `selfcast/cli.py`, `selfcast/voices.py`,
+  `selfcast/config.py`. Tests: `uv run pytest`.
 
 ## Constraints
 

@@ -365,6 +365,26 @@ def chapters(items: list, starts: dict[int, float], title: str) -> list[dict]:
     return out
 
 
+def script_sections(raw: str, level: int = 2, opening_words: int = 20) -> list[tuple[str, str]]:
+    """[(heading as written, the opening words of its section)] for each heading of `level`,
+    in order: what's needed to find where each section starts in a recording of the script."""
+    items, _ = parse_script(raw)
+    out = []
+    for i, it in enumerate(items):
+        if not (isinstance(it, Speech) and it.heading == level and it.title):
+            continue
+        words: list[str] = []
+        for nxt in items[i + 1:]:
+            if isinstance(nxt, Speech):
+                if nxt.heading:
+                    break
+                words += nxt.text.split()
+                if len(words) >= opening_words:
+                    break
+        out.append((it.title, " ".join(words[:opening_words])))
+    return out
+
+
 def first_heading(raw: str) -> str | None:
     m = re.search(r"^#{1,2}\s+(.+?)\s*#*\s*$", raw, re.M)
     return _tidy(_clean_inline(m.group(1))) if m else None

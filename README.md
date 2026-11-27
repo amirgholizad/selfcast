@@ -197,6 +197,7 @@ heard = ["Self cast"]     # how Whisper may write it, so the quality check accep
 uv run selfcast clone   --recording FILE [--name me] [--display-name "Your Name"] [--force] [--default]
                         [--ref-start SECONDS|auto] [--ref-seconds 60]
 uv run selfcast podcast --file SCRIPT.md | --text "..." [options]
+uv run selfcast master  --recording FILE [--script SCRIPT.md] [options]
 uv run selfcast voices
 ```
 
@@ -291,6 +292,35 @@ your script (a name, or something newer than Whisper, like "ChatGPT", which it h
 Transcribing takes about a second per sentence, and it runs during the rest that eco mode takes
 anyway, so it adds little to the render time. Turn it off with `--no-qa`.
 
+## Mastering your own recording
+
+When you'd rather read a post yourself, `master` gives your recording the same finish as a
+rendered episode:
+
+```sh
+uv run selfcast master --recording recordings/my-post.m4a --script scripts/my-post.md
+```
+
+1. **Denoise** with ffmpeg's `afftdn` filter (or `--denoise deepfilter`, see below).
+2. **Shorten long pauses.** [silero-vad](https://github.com/snakers4/silero-vad) finds the speech,
+   and any pause longer than about a second is cut to about 0.75 s. Shorter pauses are left alone.
+3. **Normalize** to -16 LUFS with peaks limited to -1 dBFS, like rendered episodes.
+4. **Chapters.** Whisper transcribes the result (on the CPU, in 28-second windows), and each `##`
+   heading of the script is found in it, by the heading itself if you read it aloud, or by the
+   first words of its section. The chapters go into `<episode>.chapters.json` and the MP3.
+
+Next to the audio you get the `.chapters.json`, a `.transcript.txt` with a timestamp per sentence,
+and a copy of the script. Everything runs on the CPU and peaked at ~4.3 GB for a 5-minute recording.
+
+| `master` option | Default | Notes |
+| --- | --- | --- |
+| `--script FILE` | none | Its `##` headings become chapters. Without it, no chapters. |
+| `--denoise afftdn\|deepfilter\|none` | afftdn | `deepfilter` uses DeepFilterNet3 (stronger). It isn't installed by default, because it pins old versions of `packaging` and `numpy`: add it with `uv pip install deepfilternet`. |
+| `--max-pause`, `--keep-pause` | 0.8, 0.6 | Silences between detected speech longer than `--max-pause` seconds are cut to `--keep-pause` (detected speech includes ~0.1 s of padding each side) |
+| `--title`, `--show`, `--artist` | first heading, "Podcast", none | Tags |
+| `--transcript` | off | Write the transcript even without a script |
+| `--out PATH`, `--power` | as for `podcast` | |
+
 ## Recording tips
 
 The clone copies your recording, room and all, so the recording matters more than anything else.
@@ -335,12 +365,16 @@ similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by
 ```
 .
 ├── selfcast/
-│   ├── cli.py          # clone / podcast / voices commands
+│   ├── cli.py          # clone / podcast / master / voices commands
 │   ├── engine.py       # Model loading, cached voice conditioning, synthesis, power modes
-│   ├── text.py         # Script parsing and chunking
-│   ├── audio.py        # ffmpeg I/O, pause trimming, loudness, export
+│   ├── text.py         # Script parsing, chunking, pacing, chapters
+│   ├── normalize.py    # What gets read: numbers, acronyms, colons, pronunciations
+│   ├── pronunciations.toml  # Built-in pronunciations (yours go in ./pronunciations.toml)
+│   ├── qa.py           # Whisper quality check, word timestamps, section alignment
+│   ├── audio.py        # ffmpeg I/O, pauses, loudness, export, reference windows, VAD
 │   ├── voices.py       # Voice profiles
 │   └── config.py       # Paths and tunable defaults
+├── tests/              # Unit tests (uv run pytest)
 ├── .claude/skills/     # /clone-voice and /podcast for Claude Code
 ├── scripts/            # Your scripts (example.md is included)
 ├── recordings/         # Your voice recordings (git-ignored)

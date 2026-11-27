@@ -47,6 +47,33 @@ def _variant_patterns(variants: dict[str, list[str]]) -> list[tuple[re.Pattern, 
     return [(rx, tok) for _, rx, tok in sorted(forms, key=lambda f: -f[0])]
 
 
+def speech_windows(wav: np.ndarray, sr: int, max_seconds: float = 28.0) -> list[tuple[int, int]]:
+    """Split audio into windows of at most `max_seconds`, cutting in the middle of pauses
+    (sample ranges). A stretch with no pause at all is cut hard at `max_seconds`."""
+    import librosa
+
+    limit = int(max_seconds * sr)
+    intervals = librosa.effects.split(wav, top_db=35, frame_length=1024, hop_length=256)
+    windows, start, last_end = [], 0, 0
+    for s, e in intervals:
+        if e - start > limit and last_end > start:
+            cut = (last_end + s) // 2
+            windows.append((start, cut))
+            start = cut
+        last_end = e
+    windows.append((start, len(wav)))
+    out, hop = [], 160
+    for a, b in windows:
+        while b - a > limit + sr:  # no pause found: cut at the quietest 10 ms of the last 4 s
+            lo = a + limit - 4 * sr
+            rms = librosa.feature.rms(y=wav[lo:a + limit], frame_length=hop, hop_length=hop)[0]
+            cut = lo + int(np.argmin(rms)) * hop + hop // 2
+            out.append((a, cut))
+            a = cut
+        out.append((a, b))
+    return [(a, b) for a, b in out if b - a > sr // 10]
+
+
 @dataclass
 class Check:
     """How well one take matched its text."""
@@ -139,7 +166,7 @@ class Judge:
         merged = dict(variants or {})
         self._variants = _variant_patterns(merged)
         self._variant_tokens = {_token(k) for k in merged}
-        self._model = self._processor = self._normalizer = None
+        self._model = self._processor = self._normalizer = self._asr = None
         self._path = None
 
     # ------------------------------------------------------------------ loading
@@ -204,7 +231,11 @@ class Judge:
 
     def words(self, wav: np.ndarray, sr: int) -> list[tuple[str, float, float]]:
         """Transcribe audio of any length into (word, start, end) in seconds, punctuation kept
-        on the words. Uses Whisper's cross-attention alignment, good to ~0.1 s."""
+        on the words, using Whisper's cross-attention alignment (good to ~0.1 s).
+
+        Long audio is cut into windows of up to 28 s, in the middle of pauses, and each window is
+        transcribed on its own. Whisper's own long-form mode keeps the attention data for the
+        whole file to place the words: 8 GB for a 5-minute recording, against ~1 GB this way."""
         import time
 
         import librosa
@@ -214,17 +245,20 @@ class Judge:
         t0 = time.time()
         if sr != WHISPER_SR:
             wav = librosa.resample(wav.astype(np.float32), orig_sr=sr, target_sr=WHISPER_SR)
-        asr = pipeline("automatic-speech-recognition", model=self._model, tokenizer=self._processor.tokenizer,
-                       feature_extractor=self._processor.feature_extractor, device="cpu")
-        # No chunk_length_s: Whisper's own sequential long-form decoding. The chunked pipeline
-        # duplicated stretches of text on a 2-minute episode.
-        out = asr({"raw": wav, "sampling_rate": WHISPER_SR}, return_timestamps="word", batch_size=1)
-        self.seconds += time.time() - t0
+        if self._asr is None:
+            self._asr = pipeline("automatic-speech-recognition", model=self._model, device="cpu",
+                                 tokenizer=self._processor.tokenizer,
+                                 feature_extractor=self._processor.feature_extractor)
         words = []
-        for ch in out.get("chunks", []):
-            start, end = ch["timestamp"]
-            if ch["text"].strip() and start is not None:
-                words.append((ch["text"].strip(), float(start), float(end if end is not None else start)))
+        for a, b in speech_windows(wav, WHISPER_SR):
+            out = self._asr({"raw": wav[a:b], "sampling_rate": WHISPER_SR}, return_timestamps="word")
+            offset = a / WHISPER_SR
+            for ch in out.get("chunks", []):
+                start, end = ch["timestamp"]
+                if ch["text"].strip() and start is not None:
+                    end = start if end is None else end
+                    words.append((ch["text"].strip(), round(offset + start, 2), round(offset + end, 2)))
+        self.seconds += time.time() - t0
         return words
 
     def score(self, expected: str, heard: str) -> Check:
@@ -246,3 +280,39 @@ class Judge:
 
     def check(self, expected: str, wav: np.ndarray, sr: int) -> Check:
         return self.score(expected, self.transcribe(wav, sr))
+
+
+def align_sections(judge: "Judge", sections: list[tuple[str, str]], words: list[tuple[str, float, float]],
+                   probe: int = 12, min_score: float = 0.5) -> list[dict]:
+    """Find where each section of a script starts in a transcript.
+    `sections`: [(heading, opening text of the section)], in script order.
+    `words`: [(word, start, end)] from Judge.words().
+    Each section is looked for after the previous one, by its heading (in case it was read
+    aloud) and by the first `probe` words of its text; the best match wins (ties: the earliest,
+    then the heading). Returns [{title, start, matched, score}], start in seconds or None."""
+    from difflib import SequenceMatcher
+
+    norm = [(t, i) for i, (w, _, _) in enumerate(words) for t in judge.normalize(w)]
+    tokens = [t for t, _ in norm]
+    out, pos = [], 0
+    for heading, body in sections:
+        best = (0.0, None, None)  # (score, token index, "heading" | "text")
+        for label, text in (("heading", heading), ("text", body)):
+            query = judge.normalize(text)[:probe]
+            if len(query) < 2:
+                continue
+            firsts = set(query[:3])
+            for k in range(pos, len(tokens)):
+                if tokens[k] not in firsts:
+                    continue
+                score = SequenceMatcher(None, query, tokens[k:k + len(query)], autojunk=False).ratio()
+                if score > best[0] + 1e-9 or (abs(score - best[0]) < 1e-9 and best[1] is not None and k < best[1]):
+                    best = (score, k, label)
+        score, k, label = best
+        if k is None or score < min_score:
+            out.append({"title": heading, "start": None, "matched": None, "score": round(score, 2)})
+            continue
+        out.append({"title": heading, "start": round(words[norm[k][1]][1], 2), "matched": label,
+                    "score": round(score, 2)})
+        pos = k + 1
+    return out

@@ -17,12 +17,14 @@ def require_ffmpeg() -> None:
         raise SystemExit("ffmpeg not found. Install it with:  brew install ffmpeg")
 
 
-def decode(path: Path, sr: int, highpass_hz: int | None = None) -> np.ndarray:
-    """Decode any audio/video file ffmpeg understands to mono float32 at `sr`."""
+def decode(path: Path, sr: int, highpass_hz: int | None = None, filters: str | None = None) -> np.ndarray:
+    """Decode any audio/video file ffmpeg understands to mono float32 at `sr`, optionally
+    through a high-pass and/or an ffmpeg filter chain (e.g. "afftdn=nr=12")."""
     require_ffmpeg()
     cmd = ["ffmpeg", "-v", "error", "-nostdin", "-i", str(path), "-vn", "-ac", "1", "-ar", str(sr)]
-    if highpass_hz:
-        cmd += ["-af", f"highpass=f={highpass_hz}"]
+    chain = [f for f in (f"highpass=f={highpass_hz}" if highpass_hz else None, filters) if f]
+    if chain:
+        cmd += ["-af", ",".join(chain)]
     cmd += ["-f", "f32le", "-"]
     proc = subprocess.run(cmd, capture_output=True)
     if proc.returncode != 0:
@@ -233,3 +235,71 @@ def export(wav: np.ndarray, sr: int, out: Path, *, speed: float = 1.0, metadata:
         proc = subprocess.run(cmd, capture_output=True)
         if proc.returncode != 0:
             raise RuntimeError(f"ffmpeg failed writing {out}:\n{proc.stderr.decode(errors='replace')[-800:]}")
+
+
+# --------------------------------------------------------------------------- mastering a recording
+
+def speech_segments(wav: np.ndarray, sr: int) -> list[tuple[float, float]]:
+    """Where someone is speaking, as (start, end) seconds, from silero-vad (MIT; the model ships
+    inside the package, so nothing is downloaded). Runs on the CPU."""
+    import torch
+    from silero_vad import get_speech_timestamps, load_silero_vad
+
+    y = librosa.resample(wav.astype(np.float32), orig_sr=sr, target_sr=16000) if sr != 16000 else wav
+    with torch.inference_mode():
+        stamps = get_speech_timestamps(torch.from_numpy(np.ascontiguousarray(y)), load_silero_vad(),
+                                       sampling_rate=16000, min_silence_duration_ms=150,
+                                       speech_pad_ms=80, return_seconds=True)
+    return [(float(t["start"]), float(t["end"])) for t in stamps]
+
+
+def shorten_pauses(wav: np.ndarray, sr: int, segments: list[tuple[float, float]], max_pause: float = 0.8,
+                   keep: float = 0.6, edge: float = 0.3) -> tuple[np.ndarray, dict]:
+    """Cut every silence between speech segments that is longer than `max_pause` down to `keep`
+    seconds (half kept after the speech before it, half before the speech after it), and the
+    silence at the very start and end down to `edge`. Cuts get 10 ms fades.
+    Returns (audio, stats) with stats: shortened (count), removed_sec, kept spans [(start, end)]."""
+    if not segments:
+        return wav, {"shortened": 0, "removed_sec": 0.0, "spans": [(0.0, len(wav) / sr)]}
+    total = len(wav) / sr
+    spans = [(max(0.0, segments[0][0] - edge), None)]
+    shortened = 0
+    for (_, end), (start, _) in zip(segments, segments[1:]):
+        if start - end > max_pause:
+            spans[-1] = (spans[-1][0], end + keep / 2)
+            spans.append((start - keep / 2, None))
+            shortened += 1
+    spans[-1] = (spans[-1][0], min(total, segments[-1][1] + edge))
+    fade = int(0.01 * sr)
+    ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+    pieces = []
+    for a, b in spans:
+        piece = wav[int(a * sr):int(b * sr)].copy()
+        if len(piece) > 2 * fade:
+            piece[:fade] *= ramp
+            piece[-fade:] *= ramp[::-1]
+        pieces.append(piece)
+    out = np.concatenate(pieces)
+    return out, {"shortened": shortened, "removed_sec": round(total - len(out) / sr, 1), "spans": spans}
+
+
+def denoise_deepfilter(wav: np.ndarray, sr: int) -> np.ndarray:
+    """DeepFilterNet3 noise suppression (MIT/Apache-2.0). Optional: install it yourself with
+    `uv pip install deepfilternet` (it pins old versions of packaging and numpy, so it isn't a
+    project dependency). Its small model downloads on first use."""
+    try:
+        import torch
+        from df.enhance import enhance, init_df
+    except ImportError as e:
+        raise RuntimeError("--denoise deepfilter needs DeepFilterNet: uv pip install deepfilternet") from e
+    import contextlib
+    import io
+    import warnings
+
+    with warnings.catch_warnings(), contextlib.redirect_stderr(io.StringIO()):
+        warnings.simplefilter("ignore")
+        model, state, _ = init_df(log_level="ERROR")
+        y = librosa.resample(wav, orig_sr=sr, target_sr=state.sr()) if sr != state.sr() else wav
+        out = enhance(model, state, torch.from_numpy(np.ascontiguousarray(y, dtype=np.float32)).unsqueeze(0))
+    out = out.squeeze(0).numpy().astype(np.float32)
+    return librosa.resample(out, orig_sr=state.sr(), target_sr=sr) if sr != state.sr() else out

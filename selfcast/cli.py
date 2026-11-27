@@ -1,4 +1,4 @@
-"""Command-line entry point:  uv run selfcast <clone|podcast|voices> ...
+"""Command-line entry point:  uv run selfcast <clone|podcast|master|voices> ...
 
 Every command ends with one machine-readable line:  RESULT {...json...}
 """
@@ -525,6 +525,125 @@ def cmd_podcast(args: argparse.Namespace) -> None:
             "chapter_count": len(episode_chapters), "chapters_embedded": bool(embedded)})
 
 
+# --------------------------------------------------------------------------- master
+
+MASTER_SR = 48000
+
+
+def _write_transcript(words: list, path: Path) -> None:
+    """One line per sentence, with its start time."""
+    lines, sentence, start = [], [], None
+    for word, t0, _ in words:
+        start = t0 if start is None else start
+        sentence.append(word)
+        if word.endswith((".", "?", "!")):
+            lines.append(f"[{clock(start)}] {' '.join(sentence)}")
+            sentence, start = [], None
+    if sentence:
+        lines.append(f"[{clock(start)}] {' '.join(sentence)}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def cmd_master(args: argparse.Namespace) -> None:
+    """Master your own recording of a script: denoise, shorten long pauses, normalize like a
+    rendered episode, and find where each ## section starts to write chapters."""
+    from .audio import (analyze, chapter_count, decode, denoise_deepfilter, export, gain_to_lufs,
+                        shorten_pauses, speech_segments)
+    from .engine import apply_power_mode, peak_memory_gb
+    from .text import script_sections
+
+    src = Path(args.recording).expanduser().resolve()
+    if not src.is_file():
+        die(f"recording not found: {src}")
+    raw_script = None
+    if args.script:
+        script = Path(args.script).expanduser()
+        if not script.is_file():
+            die(f"script not found: {script}")
+        raw_script = script.read_text(encoding="utf-8")
+    if not 0.2 <= args.keep_pause <= args.max_pause:
+        die("--keep-pause must be at least 0.2 s and no longer than --max-pause")
+    title = args.title or (first_heading(raw_script) if raw_script else None) or src.stem
+    out = Path(args.out).expanduser().resolve() if args.out else _episode_path(title)
+    apply_power_mode(args.power, "cpu")  # everything here runs on the CPU
+    t_start, notes = time.time(), []
+
+    log(f"Reading {src.name} ...")
+    afftdn = "afftdn=nr=12:nf=-50:tn=1" if args.denoise == "afftdn" else None
+    wav = decode(src, MASTER_SR, highpass_hz=70, filters=afftdn)
+    before = analyze(wav, MASTER_SR)
+    if args.denoise == "deepfilter":
+        log("Removing noise with DeepFilterNet ...")
+        try:
+            wav = denoise_deepfilter(wav, MASTER_SR)
+        except RuntimeError as e:
+            die(str(e))
+    log("Finding speech and shortening long pauses ...")
+    segments = speech_segments(wav, MASTER_SR)
+    if not segments:
+        die("no speech found in the recording.")
+    wav, cut = shorten_pauses(wav, MASTER_SR, segments, max_pause=args.max_pause, keep=args.keep_pause)
+    mix = gain_to_lufs(wav, MASTER_SR, C.PODCAST_LUFS)
+    duration = len(mix) / MASTER_SR
+
+    chapters, words, missing = [], [], []
+    if raw_script is not None or args.transcript:
+        from .normalize import load_lexicon
+        from .qa import Judge, align_sections
+
+        log("Transcribing with Whisper (CPU) ...")
+        judge = Judge(C.QA_THRESHOLD, variants=load_lexicon(C.USER_LEXICON).accepted_variants(), log=log)
+        words = judge.words(mix, MASTER_SR)
+        sections = script_sections(raw_script) if raw_script else []
+        if sections:
+            found = align_sections(judge, sections, words)
+            missing = [f["title"] for f in found if f["start"] is None]
+            last = -1
+            for f in found:
+                if f["start"] is not None and int(f["start"]) > last:
+                    chapters.append({"start": int(f["start"]), "title": f["title"]})
+                    last = int(f["start"])
+            if chapters and chapters[0]["start"] > 0:
+                chapters.insert(0, {"start": 0, "title": title})
+            if missing:
+                notes.append("Couldn't find these sections in the recording, so they have no chapter: "
+                             + ", ".join(f'"{m}"' for m in missing))
+        elif raw_script is not None:
+            notes.append("The script has no ## headings, so there are no chapters.")
+
+    export(mix, MASTER_SR, out, chapters=chapters, metadata={
+        "title": title, "artist": args.artist, "album_artist": args.artist, "album": args.show or "Podcast",
+        "date": str(dt.date.today().year), "genre": "Podcast"})
+    chapters_path, transcript_path = out.with_suffix(".chapters.json"), out.with_suffix(".transcript.txt")
+    embedded = None
+    if chapters:
+        chapters_path.write_text(json.dumps(chapters, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        embedded = chapter_count(out) if out.suffix.lower() in (".mp3", ".m4a") else 0
+    if words:
+        _write_transcript(words, transcript_path)
+    if raw_script is not None:
+        out.with_suffix(".script.md").write_text(raw_script if raw_script.endswith("\n") else raw_script + "\n",
+                                                encoding="utf-8")
+
+    elapsed, peak = time.time() - t_start, peak_memory_gb()
+    log(f"\nDone in {human(elapsed)}: {out}  ({human(duration)} long, was {human(before['seconds'])}; "
+        f"process peak {peak:.1f} GB)")
+    log(f"  {cut['shortened']} long pauses shortened ({cut['removed_sec']:.0f}s removed), "
+        f"-16 LUFS, peaks at -1 dBFS, denoise: {args.denoise}")
+    if chapters:
+        log(f"  {len(chapters)} chapters: {chapters_path.name}" + (", also embedded in the audio file" if embedded else ""))
+        for ch in chapters:
+            log(f"    {clock(ch['start'])}  {ch['title']}")
+    for n in notes:
+        log(f"  note: {n}")
+    result({"output": str(out), "duration_sec": round(duration, 1), "original_sec": before["seconds"],
+            "pauses_shortened": cut["shortened"], "removed_sec": cut["removed_sec"], "denoise": args.denoise,
+            "chapters": str(chapters_path) if chapters else None, "chapter_count": len(chapters),
+            "chapters_embedded": bool(embedded), "missing_sections": missing,
+            "transcript": str(transcript_path) if words else None, "elapsed_sec": round(elapsed, 1),
+            "peak_memory_gb": round(peak, 2), "notes": notes})
+
+
 # --------------------------------------------------------------------------- argparse
 
 def build_parser() -> argparse.ArgumentParser:
@@ -586,6 +705,24 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--redo", help="chunk numbers to re-take, e.g. 4,12 (see the .chunks.txt file)")
     power_args(q)
     q.set_defaults(func=cmd_podcast)
+
+    m = sub.add_parser("master", help="Master your own recording of a script (denoise, pauses, loudness, chapters).")
+    m.add_argument("--recording", "-r", required=True, help="your recording (any audio/video file)")
+    m.add_argument("--script", "-s", help="the script you read (Markdown); its ## headings become chapters")
+    m.add_argument("--out", "-o", help="output .mp3/.m4a/.wav (default: podcasts/<date>-<title>/...)")
+    m.add_argument("--title", help="episode title (default: the script's first heading, else the file name)")
+    m.add_argument("--show", help="show name, written as the album tag")
+    m.add_argument("--artist", help="your name, written as the artist tag")
+    m.add_argument("--denoise", choices=("afftdn", "deepfilter", "none"), default="afftdn",
+                   help="afftdn (default): ffmpeg's FFT denoiser. deepfilter: DeepFilterNet3, stronger "
+                        "(install it first: uv pip install deepfilternet)")
+    m.add_argument("--max-pause", type=float, default=0.8,
+                   help="silences between speech longer than this (s) are shortened (default 0.8, i.e. ~1 s pauses)")
+    m.add_argument("--keep-pause", type=float, default=0.6, help="what they're shortened to (default 0.6)")
+    m.add_argument("--transcript", action="store_true", help="write a timestamped transcript even without a script")
+    m.add_argument("--power", choices=C.POWER_MODES, default=C.DEFAULT_POWER,
+                   help="eco (default): low priority, 2 threads. fast: full speed.")
+    m.set_defaults(func=cmd_master)
 
     v = sub.add_parser("voices", help="List voice profiles.")
     v.set_defaults(func=cmd_voices)

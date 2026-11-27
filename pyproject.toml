@@ -15,6 +15,7 @@ dependencies = [
     # resemble-perth (the watermarker) imports pkg_resources, removed from newer setuptools
     "setuptools<81",
     "inflect>=7",
+    "silero-vad>=6",
 ]
 
 [project.urls]
