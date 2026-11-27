@@ -40,7 +40,8 @@ Run every command from the project root (the folder containing `pyproject.toml`)
    any `flagged_chunks` (with the reason from `flag_reasons`, e.g. what Whisper heard) or `notes`. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
 
 Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, tagged), the
-`.script.md` that was read, and a `.chunks.txt` map giving the start time of every chunk.
+`.script.md` (the script, plus the text as it was read), and a `.chunks.txt` map giving the start
+time of every chunk.
 
 ## Fixing part of an episode
 
@@ -49,12 +50,15 @@ Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, 
   `uv run selfcast podcast --file <same script> --out <same .mp3> --redo 23`
   (several: `--redo 4,23`). Every other chunk comes from the cache, so it takes seconds.
 - **Wording change**: edit the script file and re-run with `--out <same .mp3>`. Only changed chunks are re-generated.
-- **Mispronounced word**: respell it phonetically in the script ("Nguyen" → "Win"), and write
-  out numbers or acronyms the way they should be said.
+- **Mispronounced word**: add it to `pronunciations.toml` in the project root (git-ignored; create
+  it if needed), e.g. `Nguyen = "Win"`, then re-run with the same `--out`. Only the chunks containing
+  it are re-generated. Numbers, spelled-out letters ("C S S" → CSS) and colons are already handled
+  automatically: don't rewrite them in the script. The episode's `.script.md` ends with the text as
+  it was actually read.
 - Chunks marked `!` in `.chunks.txt` still sounded off after retries: Whisper heard different words, or
   the take was an unusual length. The reason is listed at the bottom of `.chunks.txt`. Listen there first,
   and `--redo` them if they really are wrong. Whisper itself sometimes mishears names or new words: if a
-  flag is a false alarm, add the word's spelling as heard to `ACCEPTED_VARIANTS` in `selfcast/qa.py`.
+  flag is a false alarm, add the word's spelling as heard to `pronunciations.toml` (see the README).
 
 ## Options (podcast)
 

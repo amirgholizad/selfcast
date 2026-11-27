@@ -24,6 +24,7 @@ well-scoped features are all welcome.
 
 ```sh
 uv sync
+uv run pytest
 uv run selfcast clone --recording <a recording of yourself> --name test --force
 uv run selfcast podcast --file scripts/example.md --voice test
 ```
@@ -37,8 +38,9 @@ Then check:
 - [ ] Peak GPU memory (printed at the end) didn't grow noticeably in eco mode
 - [ ] No errors or new warnings in the output
 
-If you changed `selfcast/text.py`, try a script with headings, lists, `[pause 2s]`, author
-notes and expressive tags, and check how it was split in `.chunks.txt`.
+If you changed `selfcast/text.py` or `selfcast/normalize.py`, try a script with headings, lists,
+`[pause 2s]`, author notes, expressive tags, numbers and acronyms, and check how it was split in
+`.chunks.txt` and what was read at the end of `.script.md`. Add a test in `tests/` for new rules.
 
 ## Changing commands or the script format
 

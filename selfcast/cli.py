@@ -199,6 +199,23 @@ def _problems(text: str, info: dict, judge) -> list[str]:
     return out
 
 
+def _script_with_reading(raw: str, items: list, normalized: bool) -> str:
+    """The script as given, plus (inside an HTML comment, so re-rendering from this file reads
+    exactly the same) the text the voice model was actually given, chunk by chunk."""
+    out = raw if raw.endswith("\n") else raw + "\n"
+    if not normalized:
+        return out
+    lines = ["", "<!-- selfcast: the text as it was read (after pronunciation and number normalization).",
+             "     [n] = chunk number in .chunks.txt, (pause) = a pause from the script's structure.", ""]
+    for it in items:
+        if isinstance(it, Pause):
+            if it.seconds > CHUNK_PAUSE:
+                lines.append(f"(pause {it.seconds:g}s)")
+            continue
+        lines.append(f"[{it.index}] {it.text.replace('--', '- -')}")
+    return out + "\n".join(lines) + "\n-->\n"
+
+
 def _render_chunk(eng, text: str, seed: int, args: argparse.Namespace, judge):
     """Synthesize one chunk. A take with an implausible length (truncated or rambling), or one
     Whisper hears as different words, is re-taken with a new seed, up to --max-retries times.
@@ -253,7 +270,18 @@ def cmd_podcast(args: argparse.Namespace) -> None:
             die(f"script not found: {path}")
         raw = path.read_text(encoding="utf-8")
 
-    items, notes = parse_script(raw, engine=args.engine, max_chars=args.max_chars)
+    from .normalize import load_lexicon
+
+    lex_file = Path(args.pronunciations).expanduser() if args.pronunciations else C.USER_LEXICON
+    if args.pronunciations and not lex_file.is_file():
+        die(f"pronunciation file not found: {lex_file}")
+    try:
+        lexicon = load_lexicon(lex_file)
+    except ValueError as e:  # includes tomllib.TOMLDecodeError
+        die(f"could not read the pronunciation file: {e}")
+    normalize_text = args.normalize and args.engine != "multilingual"  # the rules are English
+    items, notes = parse_script(raw, engine=args.engine, max_chars=args.max_chars,
+                                lexicon=lexicon if normalize_text else None)
     chunks = [it for it in items if isinstance(it, Speech)]
     if not chunks:
         die("no speakable text found in the script.")
@@ -292,7 +320,7 @@ def cmd_podcast(args: argparse.Namespace) -> None:
     if args.qa:
         from .qa import Judge
 
-        judge = Judge(args.qa_threshold, log=log)
+        judge = Judge(args.qa_threshold, variants=lexicon.accepted_variants(), log=log)
 
     rendered: dict[int, np.ndarray] = {}
     infos: dict[int, dict] = {}
@@ -379,7 +407,7 @@ def cmd_podcast(args: argparse.Namespace) -> None:
 
     # Sidecars: the exact script, and a chunk map for fixing individual sentences
     script_path, chunk_path = out.with_suffix(".script.md"), out.with_suffix(".chunks.txt")
-    script_path.write_text(raw if raw.endswith("\n") else raw + "\n", encoding="utf-8")
+    script_path.write_text(_script_with_reading(raw, items, normalize_text), encoding="utf-8")
     lines = ["# chunk  start     text   ('!' = still sounded off after retries; listen there first)"]
     for c in chunks:
         mark = "!" if c.index in flagged else " "
@@ -456,6 +484,11 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--exaggeration", type=float, default=0.5, help="standard/multilingual only")
     q.add_argument("--cfg-weight", type=float, default=0.5, help="standard/multilingual only")
     q.add_argument("--max-chars", type=int, default=280, help="max characters per generated chunk")
+    q.add_argument("--normalize", action=argparse.BooleanOptionalAction, default=True,
+                   help="write out numbers, apply pronunciations.toml, turn colons into sentence breaks "
+                        "(default: on; English engines only)")
+    q.add_argument("--pronunciations", help="pronunciation file (default: pronunciations.toml in the project root, "
+                                           "merged over the built-in one)")
     q.add_argument("--max-retries", type=int, default=2)
     q.add_argument("--qa", action=argparse.BooleanOptionalAction, default=C.QA_DEFAULT,
                    help="check every chunk with Whisper (CPU) and re-take misread ones (default: on)")

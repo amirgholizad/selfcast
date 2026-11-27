@@ -1,0 +1,30 @@
+# How Selfcast says particular words. These are the shipped defaults; put your own entries in
+# pronunciations.toml at the project root (git-ignored): they're merged on top of these.
+#
+# Keys are matched as whole words, case-sensitively ("US" is not "us"). Each entry is either
+#   Word = "what to say instead"
+# or a table:
+#   [Word]
+#   say   = "what to say instead"        (optional: leave it out to keep the word as written)
+#   heard = ["how Whisper may write it"]  (optional: accepted by the QA check)
+#
+# Spelled-out letters ("C S S", "C.S.S.") are joined into the acronym automatically, because
+# Chatterbox reads common acronyms well as written and swallows a repeated letter when they're
+# spelled out. Only add a "say" entry for a word that still comes out wrong.
+
+# Written as is, Turbo sometimes reads "AWS" as a word (0 of 3 takes right in testing, against
+# 3 of 3 spelled out). HTML, CSS, SQL, MySQL, C++, API and GPU were read correctly as written.
+AWS = "A W S"
+
+# Whisper predates ChatGPT and writes it in creative ways.
+[ChatGPT]
+heard = ["Chat GPT", "Chachi PT", "Chatchy PT", "Chatty PT", "ChatGBT", "Chat GBT", "Chad GPT"]
+
+["C++"]
+heard = ["C plus plus", "see plus plus"]
+
+[MySQL]
+heard = ["My SQL", "My Sequel", "MySequel"]
+
+[JavaScript]
+heard = ["Java Script"]

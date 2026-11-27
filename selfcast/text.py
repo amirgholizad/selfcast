@@ -137,7 +137,14 @@ def _split_long(sentence: str, max_chars: int) -> list[str]:
     return _greedy(pieces, max_chars)
 
 
-def _emit(text: str, items: list, engine: str, max_chars: int, unknown: set[str]) -> None:
+def _emit_speech(part: str, items: list, engine: str, max_chars: int) -> None:
+    if not _WORD_RE.search(_TAG_RE.sub(" ", part)) and not (engine == "turbo" and _TAG_RE.search(part)):
+        return
+    pieces = [p for s in _split_sentences(part) for p in _split_long(s, max_chars)]
+    items.extend(Speech(chunk) for chunk in _greedy(pieces, max_chars))
+
+
+def _emit(text: str, items: list, engine: str, max_chars: int, unknown: set[str], lexicon=None) -> None:
     parts = _PAUSE_RE.split(_clean_inline(text))
     # re.split with one group -> [text, seconds|None, text, seconds|None, ...]
     for i, part in enumerate(parts):
@@ -145,14 +152,23 @@ def _emit(text: str, items: list, engine: str, max_chars: int, unknown: set[str]
             items.append(Pause(min(float(part) if part else 1.0, MAX_PAUSE)))
             continue
         part = _tidy(_apply_tags(part or "", engine, unknown))
-        if not _WORD_RE.search(_TAG_RE.sub(" ", part)) and not (engine == "turbo" and _TAG_RE.search(part)):
+        if lexicon is None:
+            _emit_speech(part, items, engine, max_chars)
             continue
-        pieces = [p for s in _split_sentences(part) for p in _split_long(s, max_chars)]
-        items.extend(Speech(chunk) for chunk in _greedy(pieces, max_chars))
+        from .normalize import normalize
+
+        # normalization may add pauses of its own (after a colon); split on them too
+        for k, piece in enumerate(_PAUSE_RE.split(normalize(part, lexicon))):
+            if k % 2 == 1:
+                items.append(Pause(float(piece)))
+            else:
+                _emit_speech(_tidy(piece or ""), items, engine, max_chars)
 
 
-def parse_script(raw: str, engine: str = "turbo", max_chars: int = 280) -> tuple[list, list[str]]:
-    """Return (items, notes): items is an ordered list of Speech / Pause."""
+def parse_script(raw: str, engine: str = "turbo", max_chars: int = 280,
+                 lexicon=None) -> tuple[list, list[str]]:
+    """Return (items, notes): items is an ordered list of Speech / Pause. With a `lexicon`
+    (see normalize.py), the text is normalized to exactly what the voice model should read."""
     notes: list[str] = []
     text = raw.replace("\r\n", "\n").replace("\r", "\n").replace("﻿", "")
     text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)   # YAML front matter
@@ -167,7 +183,7 @@ def parse_script(raw: str, engine: str = "turbo", max_chars: int = 280) -> tuple
 
     def flush() -> None:
         if para:
-            _emit(" ".join(para), items, engine, max_chars, unknown)
+            _emit(" ".join(para), items, engine, max_chars, unknown, lexicon)
             items.append(Pause(PARAGRAPH_PAUSE))
             para.clear()
 
@@ -183,7 +199,7 @@ def parse_script(raw: str, engine: str = "turbo", max_chars: int = 280) -> tuple
         if m := _HEADING_RE.match(s):
             flush()
             items.append(Pause(HEADING_PAUSE))
-            _emit(_finish(m.group(1)), items, engine, max_chars, unknown)
+            _emit(_finish(m.group(1)), items, engine, max_chars, unknown, lexicon)
             items.append(Pause(HEADING_PAUSE))
             continue
         s = re.sub(r"^>\s?", "", s)
@@ -211,6 +227,13 @@ def parse_script(raw: str, engine: str = "turbo", max_chars: int = 280) -> tuple
         if isinstance(it, Speech):
             n += 1
             it.index = n
+    if lexicon is not None:
+        from .normalize import repeated_words
+
+        repeats = sorted({r for it in cleaned if isinstance(it, Speech) for r in repeated_words(it.text)})
+        if repeats:
+            notes.append("Immediately repeated words can come out once: " + ", ".join(f'"{r}"' for r in repeats[:8])
+                         + ". If one goes missing, rephrase or add a comma.")
     if unknown:
         notes.append("Removed bracketed text that isn't a supported tag: " + ", ".join(sorted(unknown)[:10]))
     if engine != "turbo" and any(f"[{t}]" in raw.lower() for t in TURBO_TAGS):

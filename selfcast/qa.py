@@ -19,15 +19,9 @@ WHISPER_REQUIRED = ["config.json", "model.safetensors", "preprocessor_config.jso
 WHISPER_SR = 16000
 WHISPER_WINDOW = 30.0  # seconds; longer audio goes through Whisper's long-form decoding
 
-# Words Whisper writes differently from how they're spelled in a script, often because they
-# are newer than Whisper (it predates ChatGPT and hears "Chachi PT"). Spelled-out letters
-# ("C S S", "C.S.S.") need no entry: they are matched against the acronym automatically.
-ACCEPTED_VARIANTS: dict[str, list[str]] = {
-    "ChatGPT": ["Chat GPT", "Chachi PT", "Chatchy PT", "Chatty PT", "ChatGBT", "Chat GBT", "Chad GPT"],
-    "C++": ["C plus plus", "see plus plus"],
-    "MySQL": ["My SQL", "My Sequel", "MySequel"],
-    "JavaScript": ["Java Script"],
-}
+# Words Whisper writes differently from the script (it predates ChatGPT and hears "Chachi PT")
+# come from the "heard" lists in pronunciations.toml (see normalize.py). Spelled-out letters
+# ("C S S", "C.S.S.") need no entry: they're matched against the acronym automatically.
 
 _LETTER_RUN_RE = re.compile(r"(?<![A-Za-z])[A-Z](?:(?:\.\s*|[\s,\-]+)[A-Z])+(?![A-Za-z])\.?")
 
@@ -142,7 +136,7 @@ class Judge:
         self.model_name = WHISPER_REPO
         self.log = log
         self.seconds = 0.0  # total time spent transcribing
-        merged = {**ACCEPTED_VARIANTS, **(variants or {})}
+        merged = dict(variants or {})
         self._variants = _variant_patterns(merged)
         self._variant_tokens = {_token(k) for k in merged}
         self._model = self._processor = self._normalizer = None

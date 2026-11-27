@@ -133,8 +133,36 @@ Scripts are plain text or Markdown. Everything below is optional.
 Link text is read and URLs are dropped. Bare URLs and code blocks are skipped. See
 [`scripts/example.md`](scripts/example.md) for a sample.
 
-**Pronunciation:** respell tricky names phonetically ("Nguyen" → "Win"), and write numbers
-and acronyms the way you'd say them.
+### What gets read
+
+Before anything is spoken, Selfcast rewrites the text into exactly what the voice should say:
+
+- **Numbers** are written out: `120` → "one hundred and twenty", `$5` → "five dollars",
+  `43%` → "forty-three percent", `1st` → "first", `1995` → "nineteen ninety-five", `3:30` →
+  "three thirty", `10-12` → "ten to twelve".
+- **Spelled-out letters** are joined back into the acronym: `C S S` → `CSS`. Chatterbox reads
+  common acronyms (HTML, CSS, AWS, SQL...) well as written, but spelled out letter by letter they
+  sound choppy and a repeated letter gets swallowed ("C S S" comes out as "CS").
+- **Colons and mid-sentence ellipses** become a sentence break with a 0.6 s pause. Chatterbox would
+  otherwise read them as commas and rush on.
+- **Your pronunciations** from `pronunciations.toml` are applied (see below).
+
+The episode's `.script.md` ends with the text as it was read, chunk by chunk, so you can see
+exactly what the voice was given. Turn all of this off with `--no-normalize`.
+
+### Pronunciations
+
+For a word that still comes out wrong, create `pronunciations.toml` in the project folder (it's
+git-ignored, and merged over the [built-in list](selfcast/pronunciations.toml)):
+
+```toml
+Nguyen = "Win"            # say this instead (whole word, case-sensitive)
+"Ph.D." = "P H D"
+
+[Selfcast]                # or a table:
+say = "Self cast"
+heard = ["Self cast"]     # how Whisper may write it, so the quality check accepts it
+```
 
 ## Command reference
 
@@ -155,6 +183,8 @@ uv run selfcast voices
 | `--qa` / `--no-qa` | on | Check every chunk with Whisper and re-take misread ones. See [Quality check](#quality-check). |
 | `--qa-threshold` | 0.1 | Word error rate above which a take is re-done |
 | `--max-retries N` | 2 | Re-takes per chunk before it's flagged instead |
+| `--normalize` / `--no-normalize` | on | Write out numbers, join spelled-out letters, apply pronunciations. See [What gets read](#what-gets-read). |
+| `--pronunciations FILE` | `pronunciations.toml` | Your pronunciation file, merged over the built-in one |
 | `--seed N` | 42 | A different take of the whole episode |
 | `--engine turbo\|standard\|multilingual` | turbo | See below |
 | `--language xx` | en | Multilingual engine only |
@@ -184,7 +214,7 @@ machine is plugged in and otherwise idle.
 
 ## Fixing part of an episode
 
-Each episode folder contains the `.mp3`, the exact `.script.md` that was read, and a
+Each episode folder contains the `.mp3`, the `.script.md` (your script, plus the text as it was read), and a
 `.chunks.txt` map:
 
 ```text
@@ -215,14 +245,14 @@ never shown to Whisper, so it can't hear what it expects to hear.
 
 A take is re-done when:
 
-- an acronym, a number or a listed word comes back wrong ("CS" for "CSS"),
+- an acronym, a number or a word from the pronunciation file comes back wrong ("CS" for "CSS"),
 - two or more words in a row are wrong (a slur: "far fewer leave" heard as "fewerly"), or
 - more than 10% of the words are wrong (`--qa-threshold`).
 
 A single misheard ordinary word in a long sentence is tolerated, because Whisper makes those
 mistakes too ("assistants" vs. "assistance"). If Whisper keeps writing a word differently from
 your script (a name, or something newer than Whisper, like "ChatGPT", which it hears as
-"Chachi PT"), add the way Whisper writes it to `ACCEPTED_VARIANTS` in `selfcast/qa.py`.
+"Chachi PT"), add it to the `heard` list in your pronunciation file.
 
 Transcribing takes about a second per sentence, and it runs during the rest that eco mode takes
 anyway, so it adds little to the render time. Turn it off with `--no-qa`.

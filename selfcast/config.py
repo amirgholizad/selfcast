@@ -8,6 +8,7 @@ VOICES_DIR = ROOT / "voices"
 PODCASTS_DIR = ROOT / "podcasts"
 SCRIPTS_DIR = ROOT / "scripts"
 CACHE_DIR = ROOT / ".cache" / "chunks"
+USER_LEXICON = ROOT / "pronunciations.toml"  # your own pronunciations (git-ignored)
 
 ENGINES = ("turbo", "standard", "multilingual")
 DEFAULT_ENGINE = "turbo"  # fastest on Apple Silicon; English only
