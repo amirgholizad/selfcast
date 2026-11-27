@@ -1,0 +1,56 @@
+name: Bug report
+description: Something crashed, sounds wrong, or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Please don't attach voice recordings or voice profiles. Describe what you hear instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you see or hear, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command you ran
+      placeholder: uv run selfcast podcast --file scripts/example.md
+      render: sh
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Output
+      description: The full terminal output, including the final `RESULT` line or the error.
+      render: text
+  - type: input
+    id: machine
+    attributes:
+      label: Machine
+      placeholder: e.g. MacBook Air M4, 16 GB, macOS 26
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Engine
+      options:
+        - turbo (default)
+        - standard
+        - multilingual
+  - type: dropdown
+    id: power
+    attributes:
+      label: Power mode
+      options:
+        - eco (default)
+        - fast
+  - type: textarea
+    id: script
+    attributes:
+      label: Script excerpt
+      description: If the problem is with how text is read or split, paste the relevant lines (remove anything private).
+      render: markdown

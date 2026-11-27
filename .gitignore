@@ -1,0 +1,23 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.cache/
+.playwright-mcp/
+
+# Your voice data and episodes: biometric data, never commit
+voices/
+podcasts/
+recordings/*
+!recordings/README.md
+scripts/*
+!scripts/example.md

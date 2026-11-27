@@ -1,0 +1,31 @@
+[project]
+name = "selfcast"
+version = "0.1.0"
+description = "Turn text into a podcast in your own cloned voice. Runs locally (Chatterbox TTS)."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Amir Gholizad" }]
+requires-python = ">=3.11,<3.12"
+keywords = ["voice-cloning", "tts", "podcast", "chatterbox", "apple-silicon", "text-to-speech"]
+dependencies = [
+    "chatterbox-tts==0.1.7",
+    "soundfile>=0.12",
+    "pyloudnorm>=0.1.1",
+    # resemble-perth (the watermarker) imports pkg_resources, removed from newer setuptools
+    "setuptools<81",
+]
+
+[project.urls]
+Repository = "https://github.com/amirgholizad/selfcast"
+Issues = "https://github.com/amirgholizad/selfcast/issues"
+
+[project.scripts]
+selfcast = "selfcast.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["selfcast"]
