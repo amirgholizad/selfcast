@@ -36,7 +36,7 @@ Done in 2m 10s: podcasts/2026-11-27-the-two-minute-rule/2026-11-27-the-two-minut
 - **Write scripts in Markdown.** Headings, lists, `[pause 2s]`, author notes that aren't read
   aloud, and expressive tags like `[laugh]`, `[sigh]` and `[whispering]`.
 - **Podcast-ready output.** 44.1 kHz MP3 at -16 LUFS (the usual podcast loudness), peaks limited
-  to -1 dBFS, with title, show and artist tags.
+  to -1 dBFS, with title, show and artist tags, and chapters from your `##` headings.
 - **Fix one sentence, not the whole episode.** Every episode comes with a chunk map of timestamps.
   Re-take only the line that sounds off, or edit the script: unchanged sentences come from a cache.
 - **Listens to itself.** Every sentence is transcribed with Whisper (locally, on the CPU) and
@@ -124,6 +124,7 @@ Scripts are plain text or Markdown. Everything below is optional.
 | --- | --- |
 | A blank line | A paragraph break (a longer pause) |
 | `# Heading` | Read as its own phrase, with a pause before and after. The first heading becomes the episode title. |
+| `## Heading` | Also starts a chapter (see below) |
 | `- item` or `1. item` | Each item read as its own phrase |
 | `[pause]` or `[pause 2.5s]` | A pause (default 1 s, max 10 s) |
 | `---` | A 1.5 s scene break |
@@ -167,6 +168,14 @@ added afterwards. Rather than one fixed gap everywhere, each pause depends on wh
 Each pause also varies by a few percent, so the rhythm doesn't feel mechanical. The same seed
 always gives the same pauses. `[pause]` and `---` are kept exactly as written. `--pacing fixed`
 brings back the old fixed pauses.
+
+### Chapters
+
+Every `## Heading` starts a chapter. The episode gets `<episode>.chapters.json` next to its
+`.chunks.txt`, as `[{"start": 0, "title": "..."}]` with start times in whole seconds (rounded
+down), and the same chapters are written into the MP3 (ID3 `CHAP` frames) or M4A, so podcast
+apps can show them. If the first `##` heading isn't at the very start, a first chapter named
+after the episode covers the intro.
 
 ### Pronunciations
 
@@ -239,8 +248,8 @@ machine is plugged in and otherwise idle.
 
 ## Fixing part of an episode
 
-Each episode folder contains the `.mp3`, the `.script.md` (your script, plus the text as it was read), and a
-`.chunks.txt` map:
+Each episode folder contains the `.mp3`, the `.script.md` (your script, plus the text as it was read),
+a `.chapters.json` when the script has `##` headings, and a `.chunks.txt` map:
 
 ```text
 # chunk  start     text   ('!' = still sounded off after retries; listen there first)

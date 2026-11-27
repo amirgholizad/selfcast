@@ -37,11 +37,13 @@ Run every command from the project root (the folder containing `pyproject.toml`)
    - Never run two renders at once.
 
 4. **Report** from the final `RESULT {...}` line: the output path as a link, the duration, and
-   any `flagged_chunks` (with the reason from `flag_reasons`, e.g. what Whisper heard) or `notes`. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
+   any `flagged_chunks` (with the reason from `flag_reasons`, e.g. what Whisper heard) or `notes`,
+   and the `chapter_count` when there are chapters. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
 
-Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, tagged), the
-`.script.md` (the script, plus the text as it was read), and a `.chunks.txt` map giving the start
-time of every chunk.
+Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, tagged, with
+chapters from the `##` headings), the `.script.md` (the script, plus the text as it was read), a
+`.chapters.json` (`[{start, title}]`, when there are `##` headings), and a `.chunks.txt` map giving
+the start time of every chunk.
 
 ## Fixing part of an episode
 
@@ -77,7 +79,7 @@ time of every chunk.
 
 ## Script syntax (all optional)
 
-- Blank line = paragraph pause · `# Heading` = read as its own phrase, with pauses around it · `- item` = one phrase each
+- Blank line = paragraph pause · `# Heading` = read as its own phrase, with pauses around it · `## Heading` also starts a chapter · `- item` = one phrase each
 - `[pause]` (1 s) or `[pause 2.5s]` · `---` = 1.5 s scene break · `<!-- notes -->` are never read
 - Turbo expressive tags: `[laugh] [chuckle] [sigh] [gasp] [clear throat] [whispering] [dramatic] [happy] [sarcastic] [surprised]`
 - Links keep their text and drop the URL. Bare URLs and code blocks are skipped.

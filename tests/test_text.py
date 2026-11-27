@@ -52,3 +52,14 @@ def test_natural_pacing_rules():
     joins = [(prev.text, p.seconds) for prev, p in zip(items, items[1:]) if isinstance(p, Pause) and p.kind == "chunk"]
     clause = [s for t, s in joins if t.rstrip().endswith(",")]
     assert clause and max(clause) < (GAP["sentence"] - TRIM_PADDING) * 0.85
+
+
+def test_chapters_from_level_two_headings():
+    from selfcast.text import chapters
+
+    items, _ = parse_script(SCRIPT, max_chars=80, pacing_seed=1)
+    starts = {it.index: 1.7 + 10 * it.index for it in items if isinstance(it, Speech)}
+    out = chapters(items, starts, "Title")
+    assert [c["title"] for c in out] == ["Title", "Section one", "Section two"]   # intro chapter first
+    assert out[0]["start"] == 0 and all(isinstance(c["start"], int) for c in out)
+    assert out[1]["start"] == int(starts[2])                                     # rounded down

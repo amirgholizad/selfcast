@@ -15,7 +15,8 @@ import time
 from pathlib import Path
 
 from . import config as C
-from .text import CHUNK_PAUSE, Pause, Speech, first_heading, parse_script, slugify, speech_bounds, word_count
+from .text import (CHUNK_PAUSE, Pause, Speech, chapters, first_heading, parse_script, slugify, speech_bounds,
+                   word_count)
 
 
 def log(msg: str = "") -> None:
@@ -461,15 +462,27 @@ def cmd_podcast(args: argparse.Namespace) -> None:
     parts.append(silence(1.0, sr))
     mix = gain_to_lufs(np.concatenate(parts), sr, C.PODCAST_LUFS)
 
+    episode_chapters = chapters(items, {i: t / args.speed for i, t in starts.items()}, title)
     artist = meta.get("display_name", voice.name)
-    export(mix, sr, out, speed=args.speed, metadata={
+    export(mix, sr, out, speed=args.speed, chapters=episode_chapters, metadata={
         "title": title, "artist": artist, "album_artist": artist, "album": args.show or "Podcast",
         "date": str(dt.date.today().year), "genre": "Podcast",
         "comment": "Synthetic voice (cloned with consent; Chatterbox TTS, watermarked)"})
     duration = len(mix) / sr / args.speed
 
-    # Sidecars: the exact script, and a chunk map for fixing individual sentences
+    # Sidecars: the exact script, a chunk map for fixing individual sentences, and the chapters
     script_path, chunk_path = out.with_suffix(".script.md"), out.with_suffix(".chunks.txt")
+    chapters_path = out.with_suffix(".chapters.json")
+    embedded = None
+    if episode_chapters:
+        chapters_path.write_text(json.dumps(episode_chapters, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        from .audio import chapter_count
+
+        embedded = chapter_count(out) if out.suffix.lower() in (".mp3", ".m4a") else 0
+        if embedded == 0 and out.suffix.lower() in (".mp3", ".m4a"):
+            notes.append("This ffmpeg didn't write chapters into the audio file; they're in .chapters.json only.")
+    elif chapters_path.exists():
+        chapters_path.unlink()  # re-render of a script that no longer has ## headings
     script_path.write_text(_script_with_reading(raw, items, normalize_text), encoding="utf-8")
     lines = ["# chunk  start     text   ('!' = still sounded off after retries; listen there first)"]
     for c in chunks:
@@ -491,6 +504,9 @@ def cmd_podcast(args: argparse.Namespace) -> None:
                     "retakes": qa_retakes, "seconds": round(judge.seconds, 1)}
     log(f"\nDone in {human(elapsed)}: {out}  ({human(duration)} long, peak GPU memory {peak_gpu:.1f} GB, "
         f"process peak {peak_mem:.1f} GB)")
+    if episode_chapters:
+        log(f"  {len(episode_chapters)} chapters: {chapters_path.name}"
+            + (", also embedded in the audio file" if embedded else ""))
     if qa_stats:
         log(f"  QA: mean WER {qa_stats['mean_wer']:.1%}, {qa_retakes} re-takes for misread words, "
             f"{qa_stats['seconds']:.0f}s transcribing")
@@ -504,7 +520,9 @@ def cmd_podcast(args: argparse.Namespace) -> None:
             "script": str(script_path), "chunk_map": str(chunk_path), "voice": voice.name,
             "engine": args.engine, "power": args.power, "elapsed_sec": round(elapsed, 1),
             "notes": notes, "flag_reasons": {str(i): reasons[i] for i in flagged}, "qa": qa_stats,
-            "peak_gpu_gb": round(peak_gpu, 2), "peak_memory_gb": round(peak_mem, 2)})
+            "peak_gpu_gb": round(peak_gpu, 2), "peak_memory_gb": round(peak_mem, 2),
+            "chapters": str(chapters_path) if episode_chapters else None,
+            "chapter_count": len(episode_chapters), "chapters_embedded": bool(embedded)})
 
 
 # --------------------------------------------------------------------------- argparse

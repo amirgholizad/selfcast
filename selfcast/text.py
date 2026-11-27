@@ -52,6 +52,7 @@ class Speech:
     text: str
     index: int = 0    # 1-based chunk number, assigned after parsing
     heading: int = 0  # heading level (1-6) when this chunk is a heading, else 0
+    title: str = ""   # the heading as written (before normalization), on its first chunk
 
 
 @dataclass
@@ -224,9 +225,10 @@ def parse_script(raw: str, engine: str = "turbo", max_chars: int = 280,
             start = len(items)
             _emit(_finish(m.group(1)), items, engine, max_chars, unknown, lexicon)
             level = len(s) - len(s.lstrip("#"))
+            title = _tidy(_clean_inline(m.group(1)))
             for it in items[start:]:
                 if isinstance(it, Speech):
-                    it.heading = level
+                    it.heading, it.title, title = level, title, ""
             items.append(Pause(HEADING_PAUSE, "heading"))
             continue
         s = re.sub(r"^>\s?", "", s)
@@ -351,6 +353,16 @@ def speech_bounds(text: str) -> tuple[float, float]:
     units = word_count(text)
     tags = len(_TAG_RE.findall(text))
     return units / 5.0, units / 1.5 + 1.5 + 1.5 * tags
+
+
+def chapters(items: list, starts: dict[int, float], title: str) -> list[dict]:
+    """[{start, title}] from the script's ## headings, start in whole seconds (rounded down).
+    A chapter at 0 named after the episode covers anything before the first one."""
+    out = [{"start": int(starts[it.index]), "title": it.title}
+           for it in items if isinstance(it, Speech) and it.heading == 2 and it.title]
+    if out and out[0]["start"] > 0:
+        out.insert(0, {"start": 0, "title": title})
+    return out
 
 
 def first_heading(raw: str) -> str | None:

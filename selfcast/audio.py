@@ -180,9 +180,30 @@ def silence(seconds: float, sr: int) -> np.ndarray:
     return np.zeros(int(round(seconds * sr)), dtype=np.float32)
 
 
+def _ffmetadata(chapters: list[dict], duration: float) -> str:
+    def esc(v: str) -> str:
+        return "".join("\\" + ch if ch in "=;#\\\n" else ch for ch in v)
+    lines = [";FFMETADATA1"]
+    for i, ch in enumerate(chapters):
+        end = chapters[i + 1]["start"] if i + 1 < len(chapters) else duration
+        lines += ["", "[CHAPTER]", "TIMEBASE=1/1000", f"START={int(ch['start'] * 1000)}",
+                  f"END={int(end * 1000)}", f"title={esc(ch['title'])}"]
+    return "\n".join(lines) + "\n"
+
+
+def chapter_count(path: Path) -> int | None:
+    """Chapters ffprobe finds in a file (None when ffprobe isn't installed)."""
+    if not shutil.which("ffprobe"):
+        return None
+    proc = subprocess.run(["ffprobe", "-v", "error", "-show_chapters", "-of", "csv=p=0", str(path)],
+                          capture_output=True, text=True)
+    return len([ln for ln in proc.stdout.splitlines() if ln.strip()]) if proc.returncode == 0 else None
+
+
 def export(wav: np.ndarray, sr: int, out: Path, *, speed: float = 1.0, metadata: dict | None = None,
-           bitrate: str = "128k") -> None:
-    """Write .mp3 / .m4a / .wav with a peak limiter (-1 dBFS) and optional tempo change."""
+           bitrate: str = "128k", chapters: list[dict] | None = None) -> None:
+    """Write .mp3 / .m4a / .wav with a peak limiter (-1 dBFS) and optional tempo change.
+    `chapters` ([{start, title}], in output seconds) go in as ID3 CHAP frames / MP4 chapters."""
     require_ffmpeg()
     out.parent.mkdir(parents=True, exist_ok=True)
     ext = out.suffix.lower()
@@ -202,7 +223,12 @@ def export(wav: np.ndarray, sr: int, out: Path, *, speed: float = 1.0, metadata:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td) / "mix.wav"
         sf.write(tmp, wav.astype(np.float32), sr, subtype="FLOAT")  # float keeps overs for the limiter
-        cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y", "-i", str(tmp), "-af", ",".join(filters),
+        inputs = ["-i", str(tmp)]
+        if chapters and ext in (".mp3", ".m4a"):
+            meta = Path(td) / "chapters.txt"
+            meta.write_text(_ffmetadata(chapters, len(wav) / sr / speed), encoding="utf-8")
+            inputs += ["-i", str(meta), "-map", "0:a", "-map_chapters", "1"]
+        cmd = ["ffmpeg", "-v", "error", "-nostdin", "-y", *inputs, "-af", ",".join(filters),
                "-ac", "1", "-ar", "44100", *codec, *meta_args, str(out)]
         proc = subprocess.run(cmd, capture_output=True)
         if proc.returncode != 0:
