@@ -291,6 +291,7 @@ Made a podcast with Selfcast? Open an issue with a link. I'd love to hear it.
   and the [Perth](https://github.com/resemble-ai/perth) watermarker by Resemble AI, MIT licensed.
 - [PyTorch](https://pytorch.org/), [librosa](https://librosa.org/), [pyloudnorm](https://github.com/csteinmetz1/pyloudnorm),
   [ffmpeg](https://ffmpeg.org/) and [uv](https://docs.astral.sh/uv/).
+- Typeface [Figtree](https://fonts.google.com/specimen/Figtree) on the demo page (SIL Open Font License).
 
 ## License
 
