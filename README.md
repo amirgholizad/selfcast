@@ -9,7 +9,11 @@ never leaves your machine. It's built on [Chatterbox](https://github.com/resembl
 by Resemble AI, and it comes with [Claude Code](https://claude.com/claude-code) skills, so
 making an episode can be as short as `/podcast my-script.md`.
 
-[Use this template](https://github.com/amirgholizad/selfcast/generate) · [Requirements](#requirements) · [Claude Code skills](#using-it-with-claude-code) · [MIT licensed](LICENSE)
+**[Listen to a demo](https://amirgholizad.github.io/selfcast/)** · [Use this template](https://github.com/amirgholizad/selfcast/generate) · [Requirements](#requirements) · [Claude Code skills](#using-it-with-claude-code) · [MIT licensed](LICENSE)
+
+The [demo](https://amirgholizad.github.io/selfcast/) is 37 seconds of my own voice, cloned from
+one minute of recording and generated on a MacBook Air M4. Nothing was edited by hand.
+([MP3](docs/demo.mp3))
 
 ```text
 $ uv run selfcast podcast --file scripts/example.md
@@ -235,6 +239,7 @@ similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by
 ├── recordings/         # Your voice recordings (git-ignored)
 ├── voices/             # Cloned voice profiles (git-ignored, created on first clone)
 ├── podcasts/           # Rendered episodes (git-ignored, created on first render)
+├── docs/               # Demo page and audio (GitHub Pages)
 ├── .github/            # Issue and pull request templates
 └── CONTRIBUTING.md     # How to contribute
 ```
