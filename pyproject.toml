@@ -14,6 +14,8 @@ dependencies = [
     "pyloudnorm>=0.1.1",
     # resemble-perth (the watermarker) imports pkg_resources, removed from newer setuptools
     "setuptools<81",
+    "inflect>=7",
+    "silero-vad>=6",
 ]
 
 [project.urls]
@@ -29,3 +31,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["selfcast"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

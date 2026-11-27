@@ -33,16 +33,18 @@ Done in 2m 10s: podcasts/2026-11-27-the-two-minute-rule/2026-11-27-the-two-minut
 - **Fully local.** Uses the Apple GPU on Apple Silicon Macs (CUDA on NVIDIA machines). The model
   weights download once (~2.8 GB), and after that it works offline.
 - **Light on your laptop.** The default *eco* mode runs at low priority on 2 CPU threads, with a
-  GPU memory cap and short rests between sentences. It peaked at under 5 GB of memory on a
-  16 GB MacBook Air, and the machine stayed responsive.
+  GPU memory cap and short rests between sentences. A render peaks at about 7 GB of memory on a
+  16 GB MacBook Air, and that doesn't grow with the length of the episode.
 - **Write scripts in Markdown.** Headings, lists, `[pause 2s]`, author notes that aren't read
   aloud, and expressive tags like `[laugh]`, `[sigh]` and `[whispering]`.
 - **Podcast-ready output.** 44.1 kHz MP3 at -16 LUFS (the usual podcast loudness), peaks limited
-  to -1 dBFS, with title, show and artist tags.
+  to -1 dBFS, with title, show and artist tags, and chapters from your `##` headings.
 - **Fix one sentence, not the whole episode.** Every episode comes with a chunk map of timestamps.
   Re-take only the line that sounds off, or edit the script: unchanged sentences come from a cache.
-- **Glitch guard.** A sentence that comes out much too long or too short (a sign of a bad take) is
-  regenerated automatically, and anything still suspicious is flagged so you know where to listen.
+- **Listens to itself.** Every sentence is transcribed with Whisper (locally, on the CPU) and
+  compared with the script. A take that drops a letter ("CS" for "C S S"), slurs words together,
+  or comes out much too long or short is regenerated automatically. Anything still off is flagged
+  with what was heard, so you know where to listen.
 - **Watermarked.** Output carries Resemble AI's inaudible [Perth](https://github.com/resemble-ai/perth)
   watermark, so it can be identified as synthetic.
 
@@ -53,7 +55,7 @@ Selfcast was built and tested on a **MacBook Air M4 with 16 GB of RAM, running m
 | Platform | Status |
 | --- | --- |
 | Apple Silicon Mac (M1-M4), 16 GB+ | **Supported.** Tested on M4 / 16 GB. Uses the Apple GPU (MPS). |
-| Apple Silicon Mac, 8 GB | Untested. Turbo peaks at ~4-5 GB, so close other apps first. |
+| Apple Silicon Mac, 8 GB | Untested. Turbo peaks at ~7 GB, so close other apps first and expect some swapping. |
 | Intel Mac | **Not supported.** Chatterbox needs PyTorch 2.6, which has no Intel macOS builds. |
 | Linux or Windows with an NVIDIA GPU | Should work (CUDA is picked automatically) but is untested. |
 | Linux or Windows, CPU only | Should work but is untested, and will be slow. |
@@ -124,6 +126,7 @@ Scripts are plain text or Markdown. Everything below is optional.
 | --- | --- |
 | A blank line | A paragraph break (a longer pause) |
 | `# Heading` | Read as its own phrase, with a pause before and after. The first heading becomes the episode title. |
+| `## Heading` | Also starts a chapter (see below) |
 | `- item` or `1. item` | Each item read as its own phrase |
 | `[pause]` or `[pause 2.5s]` | A pause (default 1 s, max 10 s) |
 | `---` | A 1.5 s scene break |
@@ -133,14 +136,70 @@ Scripts are plain text or Markdown. Everything below is optional.
 Link text is read and URLs are dropped. Bare URLs and code blocks are skipped. See
 [`scripts/example.md`](scripts/example.md) for a sample.
 
-**Pronunciation:** respell tricky names phonetically ("Nguyen" → "Win"), and write numbers
-and acronyms the way you'd say them.
+### What gets read
+
+Before anything is spoken, Selfcast rewrites the text into exactly what the voice should say:
+
+- **Numbers** are written out: `120` → "one hundred and twenty", `$5` → "five dollars",
+  `43%` → "forty-three percent", `1st` → "first", `1995` → "nineteen ninety-five", `3:30` →
+  "three thirty", `10-12` → "ten to twelve".
+- **Spelled-out letters** are joined back into the acronym: `C S S` → `CSS`. Chatterbox reads
+  common acronyms (HTML, CSS, AWS, SQL...) well as written, but spelled out letter by letter they
+  sound choppy and a repeated letter gets swallowed ("C S S" comes out as "CS").
+- **Colons and mid-sentence ellipses** become a sentence break with a 0.6 s pause. Chatterbox would
+  otherwise read them as commas and rush on.
+- **Your pronunciations** from `pronunciations.toml` are applied (see below).
+
+The episode's `.script.md` ends with the text as it was read, chunk by chunk, so you can see
+exactly what the voice was given. Turn all of this off with `--no-normalize`.
+
+### Pacing
+
+Chatterbox generates one chunk (a sentence or two) at a time, so the pauses between chunks are
+added afterwards. Rather than one fixed gap everywhere, each pause depends on what comes before it:
+
+| Join | Pause (about) |
+| --- | --- |
+| A long sentence split mid-way | 0.3 s |
+| End of a sentence | 0.5 s, a little longer after a long sentence |
+| Question / exclamation | 0.6 s / 0.55 s |
+| After a colon | 0.7 s |
+| End of a paragraph | 0.9 s, a little longer after a long paragraph |
+| Before / after a heading | 1.2 s / 0.75 s |
+
+Each pause also varies by a few percent, so the rhythm doesn't feel mechanical. The same seed
+always gives the same pauses. `[pause]` and `---` are kept exactly as written. `--pacing fixed`
+brings back the old fixed pauses.
+
+### Chapters
+
+Every `## Heading` starts a chapter. The episode gets `<episode>.chapters.json` next to its
+`.chunks.txt`, as `[{"start": 0, "title": "..."}]` with start times in whole seconds (rounded
+down), and the same chapters are written into the MP3 (ID3 `CHAP` frames) or M4A, so podcast
+apps can show them. If the first `##` heading isn't at the very start, a first chapter named
+after the episode covers the intro.
+
+### Pronunciations
+
+For a word that still comes out wrong, create `pronunciations.toml` in the project folder (it's
+git-ignored, and merged over the [built-in list](selfcast/pronunciations.toml)):
+
+```toml
+Nguyen = "Win"            # say this instead (whole word, case-sensitive)
+"Ph.D." = "P H D"
+
+[Selfcast]                # or a table:
+say = "Self cast"
+heard = ["Self cast"]     # how Whisper may write it, so the quality check accepts it
+```
 
 ## Command reference
 
 ```sh
 uv run selfcast clone   --recording FILE [--name me] [--display-name "Your Name"] [--force] [--default]
+                        [--ref-start SECONDS|auto] [--ref-seconds 60]
 uv run selfcast podcast --file SCRIPT.md | --text "..." [options]
+uv run selfcast master  --recording FILE [--script SCRIPT.md] [options]
 uv run selfcast voices
 ```
 
@@ -152,6 +211,12 @@ uv run selfcast voices
 | `--speed 0.7-1.3` | 1.0 | Tempo change with pitch preserved. Re-exporting at a new speed reuses the cache. |
 | `--power eco\|fast` | eco | See [Power and memory](#power-and-memory) |
 | `--redo 4,12` | none | Re-take only these chunks (numbers from `.chunks.txt`) |
+| `--qa` / `--no-qa` | on | Check every chunk with Whisper and re-take misread ones. See [Quality check](#quality-check). |
+| `--qa-threshold` | 0.1 | Word error rate above which a take is re-done |
+| `--max-retries N` | 2 | Re-takes per chunk before it's flagged instead |
+| `--pacing natural\|fixed` | natural | Pauses that vary with punctuation and sentence length. See [Pacing](#pacing). |
+| `--normalize` / `--no-normalize` | on | Write out numbers, join spelled-out letters, apply pronunciations. See [What gets read](#what-gets-read). |
+| `--pronunciations FILE` | `pronunciations.toml` | Your pronunciation file, merged over the built-in one |
 | `--seed N` | 42 | A different take of the whole episode |
 | `--engine turbo\|standard\|multilingual` | turbo | See below |
 | `--language xx` | en | Multilingual engine only |
@@ -170,10 +235,15 @@ Measured on a MacBook Air M4 / 16 GB:
 
 | | Peak memory | Speed |
 | --- | --- | --- |
-| Clone a voice (turbo, eco) | ~3.8 GB | ~30-45 s |
-| `turbo`, eco (default) | ~3.7-4.9 GB | ~1.4-1.6× real time, plus ~20 s to load (a 1m18s episode took 2m10s) |
+| Clone a voice (turbo, eco) | ~6.5 GB | ~30-60 s (`--ref-start auto` adds ~30 s) |
+| `turbo`, eco (default) | **~7 GB**, flat however long the episode | ~1.5-2× real time, plus ~20 s to load |
 | `turbo`, `--power fast` | higher (no GPU cap) | ~0.75× real time after warm-up |
 | `standard` / `multilingual` | **~18 GB** | ~3.5× real time. On a 16 GB Mac this pushes the machine into heavy swap. |
+
+"Peak memory" is the whole process (what Activity Monitor shows), printed at the end of every
+render as `process peak`, next to the GPU's share of it. Of the ~7 GB, ~3 GB is the model on the
+GPU, ~2 GB the Python libraries, 0.4 GB the Whisper quality check (`--no-qa` saves it), and ~1 GB
+a temporary bump while the longest sentences are decoded.
 
 Eco mode lowers the process priority, uses 2 CPU threads, caps GPU memory and rests between
 sentences, so your machine stays usable while an episode renders. Use `--power fast` when the
@@ -181,13 +251,16 @@ machine is plugged in and otherwise idle.
 
 ## Fixing part of an episode
 
-Each episode folder contains the `.mp3`, the exact `.script.md` that was read, and a
-`.chunks.txt` map:
+Each episode folder contains the `.mp3`, the `.script.md` (your script, plus the text as it was read),
+a `.chapters.json` when the script has `##` headings, and a `.chunks.txt` map:
 
 ```text
-# chunk  start     text   ('!' = duration looked off; listen there first)
+# chunk  start     text   ('!' = still sounded off after retries; listen there first)
  003    00:07.2   Today I want to share one small idea that changed how I get things done...
- 004    00:18.2   Here's how it works: If a task takes less than two minutes, do it right now...
+!004    00:18.2   Here's how it works. If a task takes less than two minutes, do it right now...
+
+# Why the '!' chunks were flagged:
+#  004  WER 6% (1/17 words): minutes -> minute
 ```
 
 - **One line sounds off:** re-take just that chunk, and everything else comes from the cache:
@@ -199,6 +272,57 @@ Each episode folder contains the `.mp3`, the exact `.script.md` that was read, a
 - **Wording change:** edit the script and re-run with the same `--out`. Only changed sentences
   are regenerated.
 
+## Quality check
+
+Chatterbox occasionally drops or slurs a word, and the duration alone rarely gives it away. So
+after each chunk is generated, Selfcast transcribes it with
+[Whisper](https://huggingface.co/openai/whisper-base.en) (`whisper-base.en`, ~290 MB, downloaded
+on first use, runs on the CPU) and compares the transcript with the chunk's text. The script is
+never shown to Whisper, so it can't hear what it expects to hear.
+
+A take is re-done when:
+
+- an acronym, a number or a word from the pronunciation file comes back wrong ("CS" for "CSS"),
+- two or more words in a row are wrong (a slur: "far fewer leave" heard as "fewerly"), or
+- more than 10% of the words are wrong (`--qa-threshold`).
+
+A single misheard ordinary word in a long sentence is tolerated, because Whisper makes those
+mistakes too ("assistants" vs. "assistance"). If Whisper keeps writing a word differently from
+your script (a name, or something newer than Whisper, like "ChatGPT", which it hears as
+"Chachi PT"), add it to the `heard` list in your pronunciation file.
+
+Transcribing takes about a second per sentence, and it runs during the rest that eco mode takes
+anyway, so it adds little to the render time. Turn it off with `--no-qa`.
+
+## Mastering your own recording
+
+When you'd rather read a post yourself, `master` gives your recording the same finish as a
+rendered episode:
+
+```sh
+uv run selfcast master --recording recordings/my-post.m4a --script scripts/my-post.md
+```
+
+1. **Denoise** with ffmpeg's `afftdn` filter (or `--denoise deepfilter`, see below).
+2. **Shorten long pauses.** [silero-vad](https://github.com/snakers4/silero-vad) finds the speech,
+   and any pause longer than about a second is cut to about 0.75 s. Shorter pauses are left alone.
+3. **Normalize** to -16 LUFS with peaks limited to -1 dBFS, like rendered episodes.
+4. **Chapters.** Whisper transcribes the result (on the CPU, in 28-second windows), and each `##`
+   heading of the script is found in it, by the heading itself if you read it aloud, or by the
+   first words of its section. The chapters go into `<episode>.chapters.json` and the MP3.
+
+Next to the audio you get the `.chapters.json`, a `.transcript.txt` with a timestamp per sentence,
+and a copy of the script. Everything runs on the CPU and peaked at ~4.3 GB for a 5-minute recording.
+
+| `master` option | Default | Notes |
+| --- | --- | --- |
+| `--script FILE` | none | Its `##` headings become chapters. Without it, no chapters. |
+| `--denoise afftdn\|deepfilter\|none` | afftdn | `deepfilter` uses DeepFilterNet3 (stronger). It isn't installed by default, because it pins old versions of `packaging` and `numpy`: add it with `uv pip install deepfilternet`. |
+| `--max-pause`, `--keep-pause` | 0.8, 0.6 | Silences between detected speech longer than `--max-pause` seconds are cut to `--keep-pause` (detected speech includes ~0.1 s of padding each side) |
+| `--title`, `--show`, `--artist` | first heading, "Podcast", none | Tags |
+| `--transcript` | off | Write the transcript even without a script |
+| `--out PATH`, `--power` | as for `podcast` | |
+
 ## Recording tips
 
 The clone copies your recording, room and all, so the recording matters more than anything else.
@@ -206,7 +330,19 @@ The clone copies your recording, room and all, so the recording matters more tha
 - 30-60 seconds of continuous speech, one speaker, with no music or TV in the background.
 - A quiet room with soft furnishings (less echo). A phone or laptop mic is fine at ~20 cm, held at a steady distance.
 - Speak the way you want the podcast to sound. The clone copies energy and pace as well as timbre.
-- Longer recordings are fine, but only the first 60 seconds of speech are used.
+- Longer recordings are fine, but only 60 seconds of speech are used (`--ref-seconds`).
+
+**Why the start of your recording matters most.** Chatterbox Turbo doesn't learn from your whole
+recording equally. Its speech prompt, which sets the delivery (pace, intonation, energy), is built
+from the **first 15 seconds** of the reference, and the decoder that shapes the sound uses the
+**first 10 seconds**. Only the speaker embedding (the timbre) hears the full 60 seconds. Most
+recordings start with a careful, slightly stiff intro, and that is the style every episode copies.
+
+- `--ref-start 42` starts the reference 42 seconds into the recording, if you know where you warmed up.
+- `--ref-start auto` scores every 15-second stretch of speech (signal-to-noise, a pace typical of the
+  rest of the recording, pitch variation, and similarity to your overall voice) and puts the best
+  one first. The rest of the speech follows, so the speaker embedding still hears all of it. The
+  chosen window is printed and saved in `voices/<name>/profile.json`.
 
 `clone` warns you about background noise, clipping or too little speech, and prints a speaker
 similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by ear.
@@ -219,23 +355,28 @@ similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by
    `voices/<name>/conds-<engine>.pt`. That file is the clone.
 2. **Parse.** The script is cleaned of Markdown and split into sentence-sized chunks of up to
    280 characters, with pauses taken from the structure.
-3. **Synthesize.** Each chunk is generated with a fixed seed, trimmed, and checked against the
-   duration its word count implies. A take outside that range is regenerated (up to 2 retries).
-   Takes are cached by a hash of the text, voice and settings.
-4. **Assemble.** Chunks and pauses are joined with short fades, normalized to -16 LUFS,
-   peak-limited, and encoded with ffmpeg.
+3. **Synthesize.** Each chunk is generated with a fixed seed, trimmed, checked against the
+   duration its word count implies, and transcribed with Whisper. A take that fails either check
+   is regenerated with a new seed (up to 2 retries) and the best take is kept. Takes are cached
+   by a hash of the text, voice and settings, together with what Whisper heard.
+4. **Assemble.** Chunks are joined with short fades and pauses that depend on the punctuation and
+   structure around them, then normalized to -16 LUFS, peak-limited, and encoded with ffmpeg.
 
 ## Project structure
 
 ```
 .
 ├── selfcast/
-│   ├── cli.py          # clone / podcast / voices commands
+│   ├── cli.py          # clone / podcast / master / voices commands
 │   ├── engine.py       # Model loading, cached voice conditioning, synthesis, power modes
-│   ├── text.py         # Script parsing and chunking
-│   ├── audio.py        # ffmpeg I/O, pause trimming, loudness, export
+│   ├── text.py         # Script parsing, chunking, pacing, chapters
+│   ├── normalize.py    # What gets read: numbers, acronyms, colons, pronunciations
+│   ├── pronunciations.toml  # Built-in pronunciations (yours go in ./pronunciations.toml)
+│   ├── qa.py           # Whisper quality check, word timestamps, section alignment
+│   ├── audio.py        # ffmpeg I/O, pauses, loudness, export, reference windows, VAD
 │   ├── voices.py       # Voice profiles
 │   └── config.py       # Paths and tunable defaults
+├── tests/              # Unit tests (uv run pytest)
 ├── .claude/skills/     # /clone-voice and /podcast for Claude Code
 ├── scripts/            # Your scripts (example.md is included)
 ├── recordings/         # Your voice recordings (git-ignored)

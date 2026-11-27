@@ -32,15 +32,18 @@ Run every command from the project root (the folder containing `pyproject.toml`)
 
    - For anything over ~1 minute of audio, run it with Bash `run_in_background: true`. You're
      notified when it exits, so don't poll it.
-   - Keep `--power eco` (the default). It takes ~4-5 GB of memory and leaves the machine
+   - Keep `--power eco` (the default). It takes ~7 GB of memory and leaves the machine
      responsive. Use `--power fast` only if the user asks for speed.
    - Never run two renders at once.
 
 4. **Report** from the final `RESULT {...}` line: the output path as a link, the duration, and
-   any `flagged_chunks` or `notes`. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
+   any `flagged_chunks` (with the reason from `flag_reasons`, e.g. what Whisper heard) or `notes`,
+   and the `chapter_count` when there are chapters. Offer to play it: `open "<mp3>"` (default player) or `afplay "<mp3>"`.
 
-Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, tagged), the
-`.script.md` that was read, and a `.chunks.txt` map giving the start time of every chunk.
+Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, tagged, with
+chapters from the `##` headings), the `.script.md` (the script, plus the text as it was read), a
+`.chapters.json` (`[{start, title}]`, when there are `##` headings), and a `.chunks.txt` map giving
+the start time of every chunk.
 
 ## Fixing part of an episode
 
@@ -49,9 +52,29 @@ Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, 
   `uv run selfcast podcast --file <same script> --out <same .mp3> --redo 23`
   (several: `--redo 4,23`). Every other chunk comes from the cache, so it takes seconds.
 - **Wording change**: edit the script file and re-run with `--out <same .mp3>`. Only changed chunks are re-generated.
-- **Mispronounced word**: respell it phonetically in the script ("Nguyen" → "Win"), and write
-  out numbers or acronyms the way they should be said.
-- Chunks marked `!` in `.chunks.txt` came out an unusual length even after retries. Listen there first.
+- **Mispronounced word**: add it to `pronunciations.toml` in the project root (git-ignored; create
+  it if needed), e.g. `Nguyen = "Win"`, then re-run with the same `--out`. Only the chunks containing
+  it are re-generated. Numbers, spelled-out letters ("C S S" → CSS) and colons are already handled
+  automatically: don't rewrite them in the script. The episode's `.script.md` ends with the text as
+  it was actually read.
+- Chunks marked `!` in `.chunks.txt` still sounded off after retries: Whisper heard different words, or
+  the take was an unusual length. The reason is listed at the bottom of `.chunks.txt`. Listen there first,
+  and `--redo` them if they really are wrong. Whisper itself sometimes mishears names or new words: if a
+  flag is a false alarm, add the word's spelling as heard to `pronunciations.toml` (see the README).
+
+## The user recorded it themselves
+
+If the user hands over **their own recording** of a script (not text to synthesize), master it
+instead of rendering:
+
+```bash
+uv run selfcast master --recording "<file>" --script scripts/<file>.md
+```
+
+It denoises, shortens long pauses, normalizes to -16 LUFS / -1 dBFS and writes chapters from the
+script's `##` headings (CPU only, ~1 minute per 5 minutes of audio). Report from `RESULT`: output,
+`duration_sec` vs `original_sec`, `pauses_shortened`, `chapter_count`, and any `missing_sections`
+(headings it couldn't find in the recording). Recordings are private: never commit or share them.
 
 ## Options (podcast)
 
@@ -64,11 +87,13 @@ Output goes to `podcasts/<date>-<title>/`: the `.mp3` (44.1 kHz mono, -16 LUFS, 
 | `--power eco/fast` | eco | eco: low priority, 2 threads, GPU memory cap, rests between chunks |
 | `--engine turbo/standard/multilingual` | turbo | **standard/multilingual peaked at ~18 GB on a 16 GB Mac**: only on explicit request, warn first |
 | `--language xx` | en | multilingual only: ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh |
-| `--seed N` | 42 | a different take of the whole episode |
+| `--seed N` | 42 | a different take of the whole episode (and slightly different pauses) |
+| `--pacing natural/fixed` | natural | natural pauses vary with punctuation and sentence length; fixed = old fixed gaps |
+| `--qa` / `--no-qa` | on | transcribe every chunk with Whisper (CPU) and re-take misread ones |
 
 ## Script syntax (all optional)
 
-- Blank line = paragraph pause · `# Heading` = read as its own phrase, with pauses around it · `- item` = one phrase each
+- Blank line = paragraph pause · `# Heading` = read as its own phrase, with pauses around it · `## Heading` also starts a chapter · `- item` = one phrase each
 - `[pause]` (1 s) or `[pause 2.5s]` · `---` = 1.5 s scene break · `<!-- notes -->` are never read
 - Turbo expressive tags: `[laugh] [chuckle] [sigh] [gasp] [clear throat] [whispering] [dramatic] [happy] [sarcastic] [surprised]`
 - Links keep their text and drop the URL. Bare URLs and code blocks are skipped.

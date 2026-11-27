@@ -30,6 +30,9 @@ Cloning extracts the voice once and saves it to `voices/<name>/`; every later po
 
    Optional: `--display-name "Their Name"` (written as the artist tag on episodes),
    `--default` (make it the default voice when several exist). Keep the default eco power mode.
+   For recordings longer than ~30 s, add `--ref-start auto`: Turbo takes its delivery from the first
+   10-15 s of the reference, and auto mode puts the best 15 s first instead of a stiff intro (the
+   choice is printed; report the chosen start time). `--ref-start SECONDS` picks a start by hand.
 
 5. **Report** from the final `RESULT {...}` line:
    - seconds of usable speech, and any `warnings` (noise, clipping, too short);

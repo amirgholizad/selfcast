@@ -8,6 +8,7 @@ VOICES_DIR = ROOT / "voices"
 PODCASTS_DIR = ROOT / "podcasts"
 SCRIPTS_DIR = ROOT / "scripts"
 CACHE_DIR = ROOT / ".cache" / "chunks"
+USER_LEXICON = ROOT / "pronunciations.toml"  # your own pronunciations (git-ignored)
 
 ENGINES = ("turbo", "standard", "multilingual")
 DEFAULT_ENGINE = "turbo"  # fastest on Apple Silicon; English only
@@ -21,6 +22,7 @@ REF_SR = 24000
 MIN_REF_SECONDS = 6.0     # Turbo refuses anything under 5 s of speech
 GOOD_REF_SECONDS = 15.0   # below this we warn that likeness may suffer
 MAX_REF_SECONDS = 60.0    # more than this adds nothing
+REF_SCAN_SECONDS = 300.0  # --ref-start auto looks for the best window in this much speech
 REF_LUFS = -20.0
 
 # Power / memory. "eco" (default) trades speed for a cool, responsive laptop:
@@ -31,7 +33,12 @@ ECO_THREADS = 2
 ECO_NICE = 10
 ECO_REST_RATIO = 0.5          # rest 0.5 s for every 1 s spent generating
 ECO_MPS_MEMORY_FRACTION = 0.6  # of macOS's recommended GPU working set (~10.7 GB on 16 GB Macs)
-HEAVY_ENGINES = ("standard", "multilingual")  # peaked at ~18 GB on a 16 GB M4 (turbo: ~4-5 GB)
+HEAVY_ENGINES = ("standard", "multilingual")  # peaked at ~18 GB on a 16 GB M4 (turbo: ~7 GB)
+
+# Whisper QA: every chunk is transcribed (openai/whisper-base.en, on the CPU) and compared
+# with its text; a take whose word error rate is above the threshold is re-taken.
+QA_DEFAULT = True
+QA_THRESHOLD = 0.1
 
 # Output
 PODCAST_LUFS = -16.0      # standard podcast loudness target
