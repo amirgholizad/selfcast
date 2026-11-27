@@ -202,6 +202,31 @@ class Judge:
         acronyms = re.findall(r"\b[A-Z][A-Za-z]*[A-Z]\b", collapse_letter_runs(text))
         return {w for a in acronyms for w in self.normalize(a)} | self._variant_tokens
 
+    def words(self, wav: np.ndarray, sr: int) -> list[tuple[str, float, float]]:
+        """Transcribe audio of any length into (word, start, end) in seconds, punctuation kept
+        on the words. Uses Whisper's cross-attention alignment, good to ~0.1 s."""
+        import time
+
+        import librosa
+        from transformers import pipeline
+
+        self._load()
+        t0 = time.time()
+        if sr != WHISPER_SR:
+            wav = librosa.resample(wav.astype(np.float32), orig_sr=sr, target_sr=WHISPER_SR)
+        asr = pipeline("automatic-speech-recognition", model=self._model, tokenizer=self._processor.tokenizer,
+                       feature_extractor=self._processor.feature_extractor, device="cpu")
+        # No chunk_length_s: Whisper's own sequential long-form decoding. The chunked pipeline
+        # duplicated stretches of text on a 2-minute episode.
+        out = asr({"raw": wav, "sampling_rate": WHISPER_SR}, return_timestamps="word", batch_size=1)
+        self.seconds += time.time() - t0
+        words = []
+        for ch in out.get("chunks", []):
+            start, end = ch["timestamp"]
+            if ch["text"].strip() and start is not None:
+                words.append((ch["text"].strip(), float(start), float(end if end is not None else start)))
+        return words
+
     def score(self, expected: str, heard: str) -> Check:
         ref, hyp = self.normalize(expected), self.normalize(heard)
         keys = self.key_words(expected)

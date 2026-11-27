@@ -71,7 +71,8 @@ time of every chunk.
 | `--power eco/fast` | eco | eco: low priority, 2 threads, GPU memory cap, rests between chunks |
 | `--engine turbo/standard/multilingual` | turbo | **standard/multilingual peaked at ~18 GB on a 16 GB Mac**: only on explicit request, warn first |
 | `--language xx` | en | multilingual only: ar da de el en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh |
-| `--seed N` | 42 | a different take of the whole episode |
+| `--seed N` | 42 | a different take of the whole episode (and slightly different pauses) |
+| `--pacing natural/fixed` | natural | natural pauses vary with punctuation and sentence length; fixed = old fixed gaps |
 | `--qa` / `--no-qa` | on | transcribe every chunk with Whisper (CPU) and re-take misread ones |
 
 ## Script syntax (all optional)

@@ -150,6 +150,24 @@ Before anything is spoken, Selfcast rewrites the text into exactly what the voic
 The episode's `.script.md` ends with the text as it was read, chunk by chunk, so you can see
 exactly what the voice was given. Turn all of this off with `--no-normalize`.
 
+### Pacing
+
+Chatterbox generates one chunk (a sentence or two) at a time, so the pauses between chunks are
+added afterwards. Rather than one fixed gap everywhere, each pause depends on what comes before it:
+
+| Join | Pause (about) |
+| --- | --- |
+| A long sentence split mid-way | 0.3 s |
+| End of a sentence | 0.5 s, a little longer after a long sentence |
+| Question / exclamation | 0.6 s / 0.55 s |
+| After a colon | 0.7 s |
+| End of a paragraph | 0.9 s, a little longer after a long paragraph |
+| Before / after a heading | 1.2 s / 0.75 s |
+
+Each pause also varies by a few percent, so the rhythm doesn't feel mechanical. The same seed
+always gives the same pauses. `[pause]` and `---` are kept exactly as written. `--pacing fixed`
+brings back the old fixed pauses.
+
 ### Pronunciations
 
 For a word that still comes out wrong, create `pronunciations.toml` in the project folder (it's
@@ -183,6 +201,7 @@ uv run selfcast voices
 | `--qa` / `--no-qa` | on | Check every chunk with Whisper and re-take misread ones. See [Quality check](#quality-check). |
 | `--qa-threshold` | 0.1 | Word error rate above which a take is re-done |
 | `--max-retries N` | 2 | Re-takes per chunk before it's flagged instead |
+| `--pacing natural\|fixed` | natural | Pauses that vary with punctuation and sentence length. See [Pacing](#pacing). |
 | `--normalize` / `--no-normalize` | on | Write out numbers, join spelled-out letters, apply pronunciations. See [What gets read](#what-gets-read). |
 | `--pronunciations FILE` | `pronunciations.toml` | Your pronunciation file, merged over the built-in one |
 | `--seed N` | 42 | A different take of the whole episode |
@@ -281,8 +300,8 @@ similarity score. Same-voice clones scored 0.90-0.95 in testing. Still, judge by
    duration its word count implies, and transcribed with Whisper. A take that fails either check
    is regenerated with a new seed (up to 2 retries) and the best take is kept. Takes are cached
    by a hash of the text, voice and settings, together with what Whisper heard.
-4. **Assemble.** Chunks and pauses are joined with short fades, normalized to -16 LUFS,
-   peak-limited, and encoded with ffmpeg.
+4. **Assemble.** Chunks are joined with short fades and pauses that depend on the punctuation and
+   structure around them, then normalized to -16 LUFS, peak-limited, and encoded with ffmpeg.
 
 ## Project structure
 

@@ -206,11 +206,10 @@ def _script_with_reading(raw: str, items: list, normalized: bool) -> str:
     if not normalized:
         return out
     lines = ["", "<!-- selfcast: the text as it was read (after pronunciation and number normalization).",
-             "     [n] = chunk number in .chunks.txt, (pause) = a pause from the script's structure.", ""]
+             "     [n] = chunk number in .chunks.txt, (pause) = silence inserted between chunks.", ""]
     for it in items:
         if isinstance(it, Pause):
-            if it.seconds > CHUNK_PAUSE:
-                lines.append(f"(pause {it.seconds:g}s)")
+            lines.append(f"(pause {it.seconds:.2f}s)")
             continue
         lines.append(f"[{it.index}] {it.text.replace('--', '- -')}")
     return out + "\n".join(lines) + "\n-->\n"
@@ -281,7 +280,8 @@ def cmd_podcast(args: argparse.Namespace) -> None:
         die(f"could not read the pronunciation file: {e}")
     normalize_text = args.normalize and args.engine != "multilingual"  # the rules are English
     items, notes = parse_script(raw, engine=args.engine, max_chars=args.max_chars,
-                                lexicon=lexicon if normalize_text else None)
+                                lexicon=lexicon if normalize_text else None,
+                                pacing_seed=args.seed if args.pacing == "natural" else None)
     chunks = [it for it in items if isinstance(it, Speech)]
     if not chunks:
         die("no speakable text found in the script.")
@@ -489,6 +489,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "(default: on; English engines only)")
     q.add_argument("--pronunciations", help="pronunciation file (default: pronunciations.toml in the project root, "
                                            "merged over the built-in one)")
+    q.add_argument("--pacing", choices=("natural", "fixed"), default="natural",
+                   help="natural (default): pauses vary with punctuation, sentence and paragraph length. "
+                        "fixed: the same pause at every join")
     q.add_argument("--max-retries", type=int, default=2)
     q.add_argument("--qa", action=argparse.BooleanOptionalAction, default=C.QA_DEFAULT,
                    help="check every chunk with Whisper (CPU) and re-take misread ones (default: on)")
